@@ -212,13 +212,21 @@ def render_clinical_cofactors_sql(config: ProjectConfig) -> str:
         for index, rule in enumerate(config.phenotype.clinical_cofactors, start=1)
     )
     ctes_sql = ",\n".join(ctes)
+    joins = "\n".join(
+        f"LEFT JOIN cofactor_{index}\n  ON person.person_id = cofactor_{index}.person_id"
+        for index, _rule in enumerate(config.phenotype.clinical_cofactors, start=1)
+    )
     return f"""
 WITH
+person AS (
+  SELECT CAST(person_id AS STRING) AS person_id
+  FROM `{person_table}`
+),
 {ctes_sql}
 SELECT
-  CAST(p.person_id AS STRING) AS person_id,
+  person.person_id,
   {columns}
-FROM `{person_table}` p
+FROM person
 {joins}
 """.strip()
 
