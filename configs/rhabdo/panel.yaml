@@ -1,0 +1,77 @@
+genes_of_interest:
+  - RYR1
+  - CPT2
+  - PYGM
+  - LPIN1
+  - CACNA1S
+  - AMPD1
+  - CKM
+burden_target_genes:
+  - RYR1
+  - CPT2
+  - PYGM
+  - LPIN1
+  - CACNA1S
+  - AMPD1
+  - CKM
+a_priori_variants:
+  - label: HBB sickle trait
+    gene: HBB
+    rsid: rs334
+    contig: chr11
+    position: 5227002
+    ref: T
+    alt: A
+    source: Deuster2013
+    evidence_tier: candidate_common
+    exact_test_model: carrier_vs_noncarrier
+  - label: RYR1 Arg401Cys
+    gene: RYR1
+    rsid: rs193922764
+    contig: chr19
+    position: 38451842
+    ref: C
+    alt: T
+    source: a_priori_RYR1
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
+  - label: RYR1 Gly2434Arg
+    gene: RYR1
+    rsid: rs121918593
+    contig: chr19
+    position: 38499993
+    ref: G
+    alt: A
+    source: a_priori_RYR1
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
+  - label: CPT2 Ser113Leu
+    gene: CPT2
+    rsid: rs74315294
+    contig: chr1
+    position: 53202427
+    ref: C
+    alt: T
+    source: CPT2_myopathic_form
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
+  - label: CACNA1S Arg1086His
+    gene: CACNA1S
+    rsid: rs1800559
+    contig: chr1
+    position: 201060815
+    ref: C
+    alt: T
+    source: MH_ER_related
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
+  - label: PYGM Arg50Ter
+    gene: PYGM
+    rsid: rs116987552
+    contig: chr11
+    position: 64526623
+    ref: C
+    alt: T
+    source: McArdle_candidate
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier

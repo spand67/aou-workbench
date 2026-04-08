@@ -1,0 +1,13 @@
+workspace_bucket:
+workspace_cdr:
+requester_pays_project:
+requester_pays_buckets: []
+genomics_bucket: gs://vwb-aou-datasets-controlled
+storage_root: ./outputs
+wgs_vds_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/vds/hail.vds
+vat_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/aux/vat/vat_complete.bgz.tsv.gz
+exome_mt_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/exome/hail.mt
+clinvar_mt_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/clinvar/hail.mt
+acaf_mt_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/acaf_threshold/hail.mt
+flagged_samples_path:
+max_unrelated_path:

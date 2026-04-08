@@ -1,0 +1,41 @@
+tables:
+  cohort_table: ./data/rhabdo/cohort.tsv
+  condition_table: ./data/rhabdo/condition_occurrence.tsv
+  measurement_table: ./data/rhabdo/measurement.tsv
+  ancestry_table: ./data/rhabdo/ancestry.tsv
+  clinical_table: ./data/rhabdo/clinical.tsv
+person_id_column: person_id
+age_column: age
+sex_column: sex
+observation_start_column: observation_start_date
+observation_end_column: observation_end_date
+condition_concept_column: condition_concept_id
+condition_date_column: condition_start_date
+measurement_concept_column: measurement_concept_id
+measurement_value_column: value_as_number
+measurement_date_column: measurement_date
+ancestry_person_id_column: research_id
+ancestry_label_column: ancestry_pred
+pc_columns: [PC1, PC2, PC3, PC4, PC5, PC6, PC7, PC8, PC9, PC10]
+clinical_person_id_column: person_id
+clinical_cofactor_columns:
+  - statin_exposure
+  - crush_injury
+  - sepsis
+  - renal_injury
+definite:
+  condition_concept_ids: [4345578]
+  measurement_concept_ids: [3004249]
+  measurement_min: 5000
+  require_condition: true
+  require_measurement: true
+  lookback_days: 30
+probable:
+  condition_concept_ids: [4345578]
+  measurement_concept_ids: [3004249]
+  measurement_min: 1000
+  require_condition: false
+  require_measurement: true
+  lookback_days: 30
+control_exclusion_concept_ids: []
+min_observation_days: 180
