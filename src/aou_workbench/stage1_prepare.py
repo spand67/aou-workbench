@@ -155,10 +155,15 @@ def prepare_stage1_variant_table(
     sample_ids = _matched_person_ids(matched_df)
     output_path = stage.variant_table
     ensure_parent_dir(output_path)
+    print(
+        f"Preparing Stage 1 extraction for {len(sample_ids)} matched participants and {len(target_df)} target variants.",
+        flush=True,
+    )
 
     if target_df.empty:
         empty = _collapse_stage1_rows(pd.DataFrame())
         write_dataframe(empty, output_path)
+        print(f"No target variants configured; wrote empty Stage 1 table to {output_path}", flush=True)
         return empty
 
     hl = ensure_hail(
@@ -172,6 +177,7 @@ def prepare_stage1_variant_table(
     failures: dict[str, str] = {}
     for callset_name, mt_path in _callset_paths(config).items():
         attempted[callset_name] = mt_path
+        print(f"Reading {callset_name} callset from {mt_path}", flush=True)
         try:
             frame = _extract_from_callset(
                 hl,
@@ -182,9 +188,13 @@ def prepare_stage1_variant_table(
             )
         except Exception as exc:
             failures[callset_name] = f"{type(exc).__name__}: {exc}"
+            print(f"{callset_name} failed: {type(exc).__name__}: {exc}", flush=True)
             continue
         if not frame.empty:
             frames.append(frame)
+            print(f"{callset_name} yielded {len(frame)} non-reference genotype rows.", flush=True)
+        else:
+            print(f"{callset_name} yielded 0 non-reference genotype rows.", flush=True)
 
     if not frames and failures:
         details = "\n".join(f"- {name}: {message}" for name, message in failures.items())
@@ -205,6 +215,7 @@ def prepare_stage1_variant_table(
         },
         metadata_path,
     )
+    print(f"Wrote {len(combined)} collapsed Stage 1 genotype rows to {output_path}", flush=True)
     return combined
 
 

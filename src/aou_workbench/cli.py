@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from .config import load_project_config
+from .io_utils import read_table
 from .paths import build_output_paths, project_path
 from .pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
-from .preflight import format_preflight_report, run_preflight_checks
+from .preflight import apply_runtime_defaults, format_preflight_report, run_preflight_checks
 from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_plp_panel import run_stage2_plp_panel
@@ -32,6 +34,15 @@ def _load_config(args: argparse.Namespace):
         panel_path=args.panel_config,
         analysis_path=args.analysis_config,
     )
+
+
+def _load_or_build_matched_artifacts(config):
+    effective = apply_runtime_defaults(config)
+    paths = build_output_paths(effective)
+    if os.path.exists(paths.matched_cohort_tsv):
+        matched_df = read_table(paths.matched_cohort_tsv)
+        return effective, paths, matched_df
+    return match_controls_artifacts(config)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -85,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "prepare-stage1":
-        effective, _, matched_df = match_controls_artifacts(config)
+        effective, _, matched_df = _load_or_build_matched_artifacts(config)
         frame = prepare_stage1_variant_table(effective, matched_df)
         stage = effective.analysis.stage1
         if stage is None:
@@ -102,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command in {"run-stage1", "run-stage2", "run-stage3", "run-stage4"}:
-        effective, paths, matched_df = match_controls_artifacts(config)
+        effective, paths, matched_df = _load_or_build_matched_artifacts(config)
         if args.command == "run-stage1":
             frame = run_stage1_prior_variants(effective, matched_df, paths)
             print(f"Stage 1 rows: {frame.shape[0]}")
