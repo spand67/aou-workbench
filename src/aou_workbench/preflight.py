@@ -9,6 +9,7 @@ import subprocess
 from typing import Any, Iterable
 
 from .config import DEFAULT_WORKSPACE_CDR, ProjectConfig, WorkbenchConfig
+from .io_utils import is_bigquery_table
 
 
 @dataclass(frozen=True)
@@ -172,6 +173,50 @@ def _check_local_or_gcs_path(path: str, name: str) -> PreflightCheck:
     return PreflightCheck(name=name, status="FAIL", message=f"Missing local path `{path}`.")
 
 
+def _qualify_cdr_table(cdr: str | None, reference: str) -> str | None:
+    if reference.startswith("gs://"):
+        return None
+    normalized = reference[5:] if reference.startswith("bq://") else reference
+    if is_bigquery_table(normalized):
+        return normalized
+    if "." in normalized or not cdr:
+        return None
+    return f"{cdr}.{normalized}"
+
+
+def _bigquery_table_check(cdr: str | None, table_reference: str, name: str) -> PreflightCheck:
+    qualified = _qualify_cdr_table(cdr, table_reference)
+    if not qualified:
+        return _check_local_or_gcs_path(table_reference, name)
+    try:
+        from google.cloud import bigquery  # type: ignore
+    except ImportError as exc:
+        return PreflightCheck(
+            name=name,
+            status="WARN",
+            message=f"Skipped BigQuery table check for `{qualified}` because google-cloud-bigquery is unavailable.",
+            detail=str(exc),
+        )
+    client = bigquery.Client()
+    sql = f"SELECT 1 AS ok FROM `{qualified}` LIMIT 1"
+    try:
+        list(client.query(sql).result())
+        return PreflightCheck(name=name, status="PASS", message=f"Can query `{qualified}`.")
+    except Exception as exc:  # pragma: no cover - environment dependent
+        return PreflightCheck(
+            name=name,
+            status="FAIL",
+            message=f"Cannot query `{qualified}`.",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def _check_input_reference(cdr: str | None, reference: str, name: str) -> PreflightCheck:
+    if _qualify_cdr_table(cdr, reference) or is_bigquery_table(reference):
+        return _bigquery_table_check(cdr, reference, name)
+    return _check_local_or_gcs_path(reference, name)
+
+
 def _bigquery_check(cdr: str | None) -> PreflightCheck:
     if not cdr:
         return PreflightCheck(
@@ -262,20 +307,54 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
                 else "No workspace CDR configured."
             ),
         ),
-        _check_local_or_gcs_path(effective.phenotype.tables.cohort_table, "input:cohort"),
-        _check_local_or_gcs_path(effective.phenotype.tables.condition_table, "input:condition"),
-        _check_local_or_gcs_path(effective.phenotype.tables.measurement_table, "input:measurement"),
     ]
+    if effective.phenotype.tables.cohort_table:
+        checks.append(_check_local_or_gcs_path(effective.phenotype.tables.cohort_table, "input:cohort"))
+    else:
+        checks.extend(
+            [
+                _bigquery_table_check(effective.workbench.workspace_cdr, effective.phenotype.tables.person_table, "input:person"),
+                _bigquery_table_check(
+                    effective.workbench.workspace_cdr,
+                    effective.phenotype.tables.observation_table,
+                    "input:observation_period",
+                ),
+                _bigquery_table_check(
+                    effective.workbench.workspace_cdr,
+                    effective.phenotype.tables.condition_table,
+                    "input:condition_occurrence",
+                ),
+                _bigquery_table_check(
+                    effective.workbench.workspace_cdr,
+                    effective.phenotype.tables.measurement_table,
+                    "input:measurement",
+                ),
+            ]
+        )
     if effective.phenotype.tables.ancestry_table:
-        checks.append(_check_local_or_gcs_path(effective.phenotype.tables.ancestry_table, "input:ancestry"))
-    if effective.analysis.stage1:
-        checks.append(_check_local_or_gcs_path(effective.analysis.stage1.variant_table, "input:stage1"))
-    if effective.analysis.stage2:
-        checks.append(_check_local_or_gcs_path(effective.analysis.stage2.variant_table, "input:stage2"))
-    if effective.analysis.stage3:
-        checks.append(_check_local_or_gcs_path(effective.analysis.stage3.variant_table, "input:stage3"))
-    if effective.analysis.stage4:
-        checks.append(_check_local_or_gcs_path(effective.analysis.stage4.genotype_table, "input:stage4"))
+        checks.append(
+            _bigquery_table_check(
+                effective.workbench.workspace_cdr,
+                effective.phenotype.tables.ancestry_table,
+                "input:ancestry",
+            )
+        )
+    if effective.phenotype.clinical_cofactors:
+        checks.append(
+            _bigquery_table_check(
+                effective.workbench.workspace_cdr,
+                effective.phenotype.tables.concept_table,
+                "input:concept",
+            )
+        )
+    if effective.analysis.run_stage1 and effective.analysis.stage1:
+        checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage1.variant_table, "input:stage1"))
+    if effective.analysis.run_stage2 and effective.analysis.stage2:
+        checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage2.variant_table, "input:stage2"))
+    if effective.analysis.run_stage3 and effective.analysis.stage3:
+        checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage3.variant_table, "input:stage3"))
+    if effective.analysis.run_stage4 and effective.analysis.stage4:
+        checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage4.genotype_table, "input:stage4"))
     checks.append(_bigquery_check(effective.workbench.workspace_cdr))
     checks.append(_hail_check(effective))
     for warning in runtime.warnings:

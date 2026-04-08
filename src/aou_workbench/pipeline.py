@@ -12,7 +12,12 @@ from .config import ProjectConfig
 from .io_utils import write_dataframe, write_json, write_text
 from .matching import match_case_controls, matching_qc_summary
 from .paths import ProjectPaths, build_output_paths
-from .phenotype_sql import render_case_tier_sql, render_covariate_sql
+from .phenotype_sql import (
+    render_baseline_sql,
+    render_case_tier_sql,
+    render_clinical_cofactors_sql,
+    render_covariate_sql,
+)
 from .preflight import apply_runtime_defaults, assert_preflight_ok, run_preflight_checks
 from .reporting import load_table_if_exists, write_final_report
 from .stage1_prior_variants import run_stage1_prior_variants
@@ -34,8 +39,11 @@ def _write_manifest(config: ProjectConfig, paths: ProjectPaths, extra: dict[str,
 
 
 def _write_rendered_sql(config: ProjectConfig, paths: ProjectPaths) -> None:
+    write_text(render_baseline_sql(config), f"{paths.cohort_sql_root}/baseline.sql")
     write_text(render_case_tier_sql(config, config.phenotype.definite), f"{paths.cohort_sql_root}/rhabdo_definite.sql")
     write_text(render_case_tier_sql(config, config.phenotype.probable), f"{paths.cohort_sql_root}/rhabdo_probable.sql")
+    if config.phenotype.clinical_cofactors:
+        write_text(render_clinical_cofactors_sql(config), f"{paths.cohort_sql_root}/clinical_cofactors.sql")
     write_text(render_covariate_sql(config), f"{paths.cohort_sql_root}/rhabdo_covariates.sql")
 
 

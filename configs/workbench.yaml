@@ -1,5 +1,5 @@
 workspace_bucket:
-workspace_cdr:
+workspace_cdr: wb-silky-artichoke-2408.C2024Q3R9
 requester_pays_project:
 requester_pays_buckets: []
 genomics_bucket: gs://vwb-aou-datasets-controlled

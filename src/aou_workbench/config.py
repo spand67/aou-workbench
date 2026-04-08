@@ -101,7 +101,9 @@ class WorkbenchConfig:
 class CaseTierRule:
     name: str
     condition_concept_ids: tuple[int, ...] = ()
+    condition_terms: tuple[str, ...] = ()
     measurement_concept_ids: tuple[int, ...] = ()
+    measurement_terms: tuple[str, ...] = ()
     measurement_min: float | None = None
     require_condition: bool = True
     require_measurement: bool = False
@@ -109,10 +111,20 @@ class CaseTierRule:
 
 
 @dataclass(frozen=True)
+class ClinicalCofactorRule:
+    name: str
+    condition_concept_ids: tuple[int, ...] = ()
+    condition_terms: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class PhenotypeTables:
-    cohort_table: str
-    condition_table: str
-    measurement_table: str
+    cohort_table: str | None = None
+    person_table: str = "person"
+    observation_table: str = "observation_period"
+    condition_table: str = "condition_occurrence"
+    measurement_table: str = "measurement"
+    concept_table: str = "concept"
     ancestry_table: str | None = None
     clinical_table: str | None = None
 
@@ -138,6 +150,7 @@ class PhenotypeConfig:
     pc_columns: tuple[str, ...] = tuple(f"PC{i}" for i in range(1, 11))
     clinical_person_id_column: str = "person_id"
     clinical_cofactor_columns: tuple[str, ...] = ()
+    clinical_cofactors: tuple[ClinicalCofactorRule, ...] = ()
     definite: CaseTierRule = field(
         default_factory=lambda: CaseTierRule(name="definite")
     )
@@ -326,7 +339,9 @@ def _load_case_tier(name: str, payload: Mapping[str, Any] | None) -> CaseTierRul
     return CaseTierRule(
         name=name,
         condition_concept_ids=_as_int_tuple(payload.get("condition_concept_ids")),
+        condition_terms=_as_string_tuple(payload.get("condition_terms")),
         measurement_concept_ids=_as_int_tuple(payload.get("measurement_concept_ids")),
+        measurement_terms=_as_string_tuple(payload.get("measurement_terms")),
         measurement_min=payload.get("measurement_min"),
         require_condition=bool(payload.get("require_condition", True)),
         require_measurement=bool(payload.get("require_measurement", False)),
@@ -334,16 +349,25 @@ def _load_case_tier(name: str, payload: Mapping[str, Any] | None) -> CaseTierRul
     )
 
 
+def _load_clinical_cofactor(payload: Mapping[str, Any]) -> ClinicalCofactorRule:
+    return ClinicalCofactorRule(
+        name=payload["name"],
+        condition_concept_ids=_as_int_tuple(payload.get("condition_concept_ids")),
+        condition_terms=_as_string_tuple(payload.get("condition_terms")),
+    )
+
+
 def _load_phenotype(payload: Mapping[str, Any]) -> PhenotypeConfig:
     tables_payload = payload.get("tables", {})
-    if not tables_payload:
-        raise ValueError("configs/rhabdo/phenotype.yaml must define `tables`.")
     return PhenotypeConfig(
         tables=PhenotypeTables(
-            cohort_table=tables_payload["cohort_table"],
-            condition_table=tables_payload["condition_table"],
-            measurement_table=tables_payload["measurement_table"],
-            ancestry_table=tables_payload.get("ancestry_table"),
+            cohort_table=tables_payload.get("cohort_table"),
+            person_table=tables_payload.get("person_table", "person"),
+            observation_table=tables_payload.get("observation_table", "observation_period"),
+            condition_table=tables_payload.get("condition_table", "condition_occurrence"),
+            measurement_table=tables_payload.get("measurement_table", "measurement"),
+            concept_table=tables_payload.get("concept_table", "concept"),
+            ancestry_table=tables_payload.get("ancestry_table", "person_ext"),
             clinical_table=tables_payload.get("clinical_table"),
         ),
         person_id_column=payload.get("person_id_column", "person_id"),
@@ -364,6 +388,9 @@ def _load_phenotype(payload: Mapping[str, Any]) -> PhenotypeConfig:
         pc_columns=_as_string_tuple(payload.get("pc_columns")) or tuple(f"PC{i}" for i in range(1, 11)),
         clinical_person_id_column=payload.get("clinical_person_id_column", "person_id"),
         clinical_cofactor_columns=_as_string_tuple(payload.get("clinical_cofactor_columns")),
+        clinical_cofactors=tuple(
+            _load_clinical_cofactor(item) for item in payload.get("clinical_cofactors", [])
+        ),
         definite=_load_case_tier("definite", payload.get("definite")),
         probable=_load_case_tier("probable", payload.get("probable")),
         control_exclusion_concept_ids=_as_int_tuple(payload.get("control_exclusion_concept_ids")),

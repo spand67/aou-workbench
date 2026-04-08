@@ -16,7 +16,7 @@ covariate_columns:
   - pc3
   - pc4
   - pc5
-  - statin_exposure
+  - crush_injury
   - renal_injury
   - sepsis
 require_complete_matches: false

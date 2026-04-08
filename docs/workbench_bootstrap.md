@@ -6,10 +6,11 @@ Use this repository as the Git source of truth and keep your All of Us Researche
 
 1. Create or pull `spand67/aou-workbench` into your Workbench persistent disk.
 2. Run `python -m pip install --user --no-deps -e .`.
-3. Edit only configs and notebooks in Workbench if the change should be committed back here.
+3. Set `configs/workbench.yaml` to the attached non-`prep_` CDR if your workspace differs from the checked-in default.
 4. Run `aou-workbench preflight` before any stage execution.
-5. Execute `aou-workbench run-all` or the stage-specific CLI commands.
-6. Commit reusable code, configs, docs, and notebooks here. Do not commit row-level outputs.
+5. Start with `aou-workbench build-cohort` and `aou-workbench match-controls`.
+6. Enable Stage 1-4 in `configs/rhabdo/analysis.yaml` only after their derived variant or genotype tables are configured.
+7. Commit reusable code, configs, docs, and notebooks here. Do not commit row-level outputs.
 
 ## If a session breaks after installing Hail
 
@@ -25,3 +26,10 @@ python -m pip install --user --no-deps --force-reinstall -e .
 ## Bootstrap notebook
 
 See `notebooks/01_workbench_bootstrap.ipynb` for an executable setup notebook that clones or pulls the repo, installs the package, and runs preflight.
+
+If `git pull` is blocked by notebook changes, close the notebook tabs in JupyterLab and stash them before pulling:
+
+```bash
+git stash push -m "temp notebook edits" notebooks/01_workbench_bootstrap.ipynb notebooks/02_rhabdo_end_to_end.ipynb
+git pull --ff-only origin main
+```

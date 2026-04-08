@@ -20,5 +20,5 @@ class SqlRenderingTests(unittest.TestCase):
         definite_sql = render_case_tier_sql(config, config.phenotype.definite)
         covariate_sql = render_covariate_sql(config)
         self.assertIn("5000", definite_sql)
-        self.assertIn("condition_occurrence", definite_sql)
+        self.assertIn("condition_concept_id IN (100)", definite_sql)
         self.assertIn("person", covariate_sql)

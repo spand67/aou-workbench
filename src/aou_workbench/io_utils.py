@@ -42,8 +42,26 @@ def ensure_parent_dir(path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
+def is_bigquery_table(path: str) -> bool:
+    normalized = path[5:] if path.startswith("bq://") else path
+    return bool(re.fullmatch(r"[^./`]+[.][^./`]+[.][^./`]+", normalized))
+
+
+def query_bigquery_dataframe(sql: str) -> pd.DataFrame:
+    try:
+        from google.cloud import bigquery  # type: ignore
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError("google-cloud-bigquery is required for BigQuery-backed inputs.") from exc
+    client = bigquery.Client()
+    rows = [dict(row.items()) for row in client.query(sql).result()]
+    return pd.DataFrame(rows)
+
+
 def read_table(path: str) -> pd.DataFrame:
     suffix = path.lower()
+    if is_bigquery_table(path):
+        reference = path[5:] if path.startswith("bq://") else path
+        return query_bigquery_dataframe(f"SELECT * FROM `{reference}`")
     if suffix.endswith(".parquet"):
         return pd.read_parquet(path)
     if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz"):
@@ -85,8 +103,10 @@ def parse_date(series: pd.Series) -> pd.Series:
 
 __all__ = [
     "ensure_parent_dir",
+    "is_bigquery_table",
     "load_yaml",
     "parse_date",
+    "query_bigquery_dataframe",
     "read_table",
     "slugify",
     "stable_hash",
