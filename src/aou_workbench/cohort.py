@@ -99,7 +99,7 @@ def _parse_pca_features(value: Any, count: int) -> list[float]:
     return out
 
 
-def _prepare_ancestry_local(config: ProjectConfig) -> pd.DataFrame:
+def _prepare_ancestry_table(config: ProjectConfig) -> pd.DataFrame:
     if not config.phenotype.tables.ancestry_table:
         return pd.DataFrame(columns=["person_id", "ancestry_pred", *[f"pc{i}" for i in range(1, 11)]])
     raw = read_table(config.phenotype.tables.ancestry_table).copy()
@@ -285,7 +285,7 @@ def _finalize_cohort(
 
 def _build_local_cohort(config: ProjectConfig) -> pd.DataFrame:
     base = _prepare_baseline_local(config)
-    base = base.merge(_prepare_ancestry_local(config), on="person_id", how="left")
+    base = base.merge(_prepare_ancestry_table(config), on="person_id", how="left")
     base = base.merge(_prepare_clinical_local(config), on="person_id", how="left")
     definite_hits = _aggregate_condition_hits_local(
         config,
@@ -318,6 +318,10 @@ def _build_bigquery_cohort(config: ProjectConfig) -> pd.DataFrame:
     base = _prepare_baseline_bigquery(config)
     if base.empty:
         return base
+    ancestry = _prepare_ancestry_table(config)
+    if not ancestry.empty:
+        base = base.drop(columns=[column for column in ancestry.columns if column != "person_id" and column in base.columns])
+        base = base.merge(ancestry, on="person_id", how="left")
     clinical = _prepare_clinical_bigquery(config)
     if not clinical.empty:
         base = base.merge(clinical, on="person_id", how="left")

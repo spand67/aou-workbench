@@ -118,11 +118,6 @@ def render_baseline_sql(config: ProjectConfig) -> str:
     person_table = _qualify_table(cdr, config.phenotype.tables.person_table)
     observation_table = _qualify_table(cdr, config.phenotype.tables.observation_table)
     concept_table = _qualify_table(cdr, config.phenotype.tables.concept_table)
-    ancestry_table = _qualify_table(cdr, config.phenotype.tables.ancestry_table or "person_ext")
-    pcs = ",\n  ".join(
-        f"SAFE_CAST(ancestry.{column.lower()} AS FLOAT64) AS pc{index}"
-        for index, column in enumerate(config.phenotype.pc_columns, start=1)
-    )
     return f"""
 WITH observation_windows AS (
   SELECT
@@ -144,15 +139,22 @@ SELECT
     WHEN LOWER(g.concept_name) = 'male' THEN 0.0
     ELSE NULL
   END AS is_female,
-  ancestry.ancestry_pred,
-  {pcs}
+  CAST(NULL AS STRING) AS ancestry_pred,
+  CAST(NULL AS FLOAT64) AS pc1,
+  CAST(NULL AS FLOAT64) AS pc2,
+  CAST(NULL AS FLOAT64) AS pc3,
+  CAST(NULL AS FLOAT64) AS pc4,
+  CAST(NULL AS FLOAT64) AS pc5,
+  CAST(NULL AS FLOAT64) AS pc6,
+  CAST(NULL AS FLOAT64) AS pc7,
+  CAST(NULL AS FLOAT64) AS pc8,
+  CAST(NULL AS FLOAT64) AS pc9,
+  CAST(NULL AS FLOAT64) AS pc10
 FROM `{person_table}` p
 LEFT JOIN observation_windows
   ON CAST(p.person_id AS STRING) = observation_windows.person_id
 LEFT JOIN `{concept_table}` g
   ON p.gender_concept_id = g.concept_id
-LEFT JOIN `{ancestry_table}` ancestry
-  ON CAST(p.person_id AS STRING) = CAST(ancestry.person_id AS STRING)
 """.strip()
 
 

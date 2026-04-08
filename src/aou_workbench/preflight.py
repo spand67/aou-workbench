@@ -333,7 +333,7 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
         )
     if effective.phenotype.tables.ancestry_table:
         checks.append(
-            _bigquery_table_check(
+            _check_input_reference(
                 effective.workbench.workspace_cdr,
                 effective.phenotype.tables.ancestry_table,
                 "input:ancestry",

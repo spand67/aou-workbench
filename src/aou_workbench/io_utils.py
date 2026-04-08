@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+import io
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 from typing import Any, Mapping
 
 import pandas as pd
@@ -57,11 +60,33 @@ def query_bigquery_dataframe(sql: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _gsutil_cat(path: str) -> str:
+    requester_pays_project = (
+        os.getenv("GCS_REQUESTER_PAYS_PROJECT")
+        or os.getenv("GOOGLE_PROJECT")
+        or os.getenv("GOOGLE_CLOUD_PROJECT")
+    )
+    cmd = ["gsutil"]
+    if requester_pays_project:
+        cmd.extend(["-u", requester_pays_project])
+    cmd.extend(["cat", path])
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"Failed to read {path}")
+    return result.stdout
+
+
 def read_table(path: str) -> pd.DataFrame:
     suffix = path.lower()
     if is_bigquery_table(path):
         reference = path[5:] if path.startswith("bq://") else path
         return query_bigquery_dataframe(f"SELECT * FROM `{reference}`")
+    if path.startswith("gs://"):
+        if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz"):
+            return pd.read_csv(io.StringIO(_gsutil_cat(path)), sep="\t")
+        if suffix.endswith(".csv") or suffix.endswith(".csv.gz"):
+            return pd.read_csv(io.StringIO(_gsutil_cat(path)))
+        raise ValueError(f"Unsupported remote table format: {path}")
     if suffix.endswith(".parquet"):
         return pd.read_parquet(path)
     if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz"):
