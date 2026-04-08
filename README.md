@@ -26,6 +26,13 @@ Install the optional Workbench extras inside a Hail-capable notebook environment
 python -m pip install -e ".[workbench]"
 ```
 
+If a Workbench session already pulled in `numpy>=2` and started failing with `pyarrow` or `_ARRAY_API` errors, repair the environment with:
+
+```bash
+python -m pip install --user --force-reinstall "numpy<2" "pandas<2.2" "scipy<1.12"
+python -m pip install --user --force-reinstall -e ".[workbench]"
+```
+
 ## Common commands
 
 Run preflight checks:

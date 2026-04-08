@@ -11,6 +11,17 @@ Use this repository as the Git source of truth and keep your All of Us Researche
 5. Execute `aou-workbench run-all` or the stage-specific CLI commands.
 6. Commit reusable code, configs, docs, and notebooks here. Do not commit row-level outputs.
 
+## If a session breaks after installing Hail
+
+Some Workbench images ship with `pyarrow` extensions compiled against NumPy 1.x. If pip upgrades NumPy to 2.x, commands can fail with `_ARRAY_API not found`.
+
+Repair the session with:
+
+```bash
+python -m pip install --user --force-reinstall "numpy<2" "pandas<2.2" "scipy<1.12"
+python -m pip install --user --force-reinstall -e ".[workbench]"
+```
+
 ## Bootstrap notebook
 
 See `notebooks/01_workbench_bootstrap.ipynb` for an executable setup notebook that clones or pulls the repo, installs the package, and runs preflight.
