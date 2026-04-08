@@ -9,6 +9,7 @@ from .config import load_project_config
 from .paths import build_output_paths, project_path
 from .pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
 from .preflight import format_preflight_report, run_preflight_checks
+from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_plp_panel import run_stage2_plp_panel
 from .stage3_burden import run_stage3_burden
@@ -46,6 +47,12 @@ def _build_parser() -> argparse.ArgumentParser:
     match_parser = subparsers.add_parser("match-controls", help="Build the matched case-control cohort.")
     _add_config_arguments(match_parser)
 
+    prepare_stage1_parser = subparsers.add_parser(
+        "prepare-stage1",
+        help="Prepare the Stage 1 exact-variant genotype table from AoU genomics callsets.",
+    )
+    _add_config_arguments(prepare_stage1_parser)
+
     for name in ("run-stage1", "run-stage2", "run-stage3", "run-stage4", "run-all"):
         stage_parser = subparsers.add_parser(name, help=f"Execute {name}.")
         _add_config_arguments(stage_parser)
@@ -75,6 +82,17 @@ def main(argv: list[str] | None = None) -> int:
         _, paths, matched_df = match_controls_artifacts(config)
         print(f"Matched cohort rows: {len(matched_df)}")
         print(f"Matched cohort path: {paths.matched_cohort_tsv}")
+        return 0
+
+    if args.command == "prepare-stage1":
+        effective, _, matched_df = match_controls_artifacts(config)
+        frame = prepare_stage1_variant_table(effective, matched_df)
+        stage = effective.analysis.stage1
+        if stage is None:
+            print("Stage 1 is not configured.")
+            return 0
+        print(f"Prepared Stage 1 rows: {frame.shape[0]}")
+        print(stage.variant_table)
         return 0
 
     if args.command == "run-all":
