@@ -4,7 +4,7 @@ tables:
   condition_table: condition_occurrence
   measurement_table: measurement
   concept_table: concept
-  ancestry_table: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/ancestry/ancestry_preds.tsv
+  ancestry_table: gs://fc-aou-datasets-controlled/v8/wgs/short_read/snpindel/aux/ancestry/ancestry_preds.tsv
 person_id_column: person_id
 observation_start_column: observation_start_date
 observation_end_column: observation_end_date

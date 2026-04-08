@@ -107,6 +107,12 @@ def discover_runtime_defaults() -> RuntimeDefaults:
         or os.getenv("GOOGLE_PROJECT")
         or os.getenv("GOOGLE_CLOUD_PROJECT")
     )
+    if not requester_pays_project:
+        for item in resources:
+            project_id = item.get("projectId")
+            if item.get("resourceType") in {"DATAPROC_CLUSTER", "GCS_BUCKET"} and project_id:
+                requester_pays_project = str(project_id)
+                break
     requester_pays_buckets = ()
     if genomics_bucket and genomics_bucket.startswith("gs://"):
         requester_pays_buckets = (genomics_bucket[5:],)
