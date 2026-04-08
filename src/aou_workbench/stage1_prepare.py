@@ -9,6 +9,7 @@ import pandas as pd
 from .config import ProjectConfig, TargetVariant
 from .hail_utils import ensure_hail
 from .io_utils import ensure_parent_dir, write_dataframe, write_json
+from .preflight import apply_runtime_defaults
 
 
 HAIL_REFERENCE = "GRCh38"
@@ -145,6 +146,7 @@ def prepare_stage1_variant_table(
     config: ProjectConfig,
     matched_df: pd.DataFrame,
 ) -> pd.DataFrame:
+    config = apply_runtime_defaults(config)
     stage = config.analysis.stage1
     if stage is None:
         return pd.DataFrame()
