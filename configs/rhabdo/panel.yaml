@@ -15,6 +15,16 @@ burden_target_genes:
   - AMPD1
   - CKM
 a_priori_variants:
+  - label: ACTN3 R577X
+    gene: ACTN3
+    rsid: rs1815739
+    contig: chr11
+    position: 66560624
+    ref: C
+    alt: T
+    source: Belli2017_Deuster2013
+    evidence_tier: candidate_common
+    exact_test_model: hom_alt_vs_rest
   - label: HBB sickle trait
     gene: HBB
     rsid: rs334
@@ -25,11 +35,131 @@ a_priori_variants:
     source: Deuster2013
     evidence_tier: candidate_common
     exact_test_model: carrier_vs_noncarrier
+  - label: AMPD1 Gln12Ter
+    gene: AMPD1
+    rsid: rs17602729
+    contig: chr1
+    position: 114693436
+    ref: C
+    alt: T
+    source: exercise_myopathy_candidate
+    evidence_tier: metabolic_myopathy_candidate
+    exact_test_model: carrier_vs_noncarrier
+  - label: CKM NcoI
+    gene: CKM
+    rsid: rs8111989
+    contig: chr19
+    position: 45305950
+    ref: A
+    alt: G
+    source: Deuster2013_candidate_ER
+    evidence_tier: candidate_common
+    exact_test_model: hom_alt_vs_rest
+  - label: IL6 -174G>C
+    gene: IL6
+    rsid: rs1800795
+    contig: chr7
+    position: 22727026
+    ref: C
+    alt: G
+    source: marathon_muscle_damage_candidate
+    evidence_tier: exploratory_common
+    exact_test_model: carrier_vs_noncarrier
+  - label: TNFA -308G>A
+    gene: TNFA
+    rsid: rs1800629
+    contig: chr6
+    position: 31575254
+    ref: G
+    alt: A
+    source: marathon_muscle_damage_candidate
+    evidence_tier: exploratory_common
+    exact_test_model: carrier_vs_noncarrier
+  - label: IGF2 rs680
+    gene: IGF2
+    rsid: rs680
+    contig: chr11
+    position: 2132404
+    ref: T
+    alt: C
+    source: marathon_muscle_damage_candidate
+    evidence_tier: exploratory_common
+    exact_test_model: carrier_vs_noncarrier
+  - label: CPT2 Ser113Leu
+    gene: CPT2
+    rsid: rs74315294
+    contig: chr1
+    position: 53202427
+    ref: C
+    alt: T
+    source: CPT2_myopathic_form
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
+  - label: PYGM Arg50Ter
+    gene: PYGM
+    rsid: rs116987552
+    contig: chr11
+    position: 64759751
+    ref: C
+    alt: T
+    source: McArdle_common_pathogenic
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
+  - label: CACNA1S Arg174Trp
+    gene: CACNA1S
+    rsid: rs772226819
+    contig: chr1
+    position: 201091993
+    ref: G
+    alt: A
+    source: MH_ER_related
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
+  - label: CACNA1S Arg1086His
+    gene: CACNA1S
+    rsid: rs1800559
+    contig: chr1
+    position: 201060815
+    ref: C
+    alt: T
+    source: MH_ER_related
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
+  - label: RYR1 Arg163Cys
+    gene: RYR1
+    rsid: rs118192161
+    contig: chr19
+    position: 38444211
+    ref: C
+    alt: T
+    source: a_priori_RYR1
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
+  - label: RYR1 Gly341Arg
+    gene: RYR1
+    rsid: rs121918592
+    contig: chr19
+    position: 38448712
+    ref: G
+    alt: A
+    source: a_priori_RYR1
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
   - label: RYR1 Arg401Cys
     gene: RYR1
     rsid: rs193922764
     contig: chr19
     position: 38451842
+    ref: C
+    alt: T
+    source: a_priori_RYR1
+    evidence_tier: core_pathogenic
+    exact_test_model: carrier_vs_noncarrier
+  - label: RYR1 Arg614Cys
+    gene: RYR1
+    rsid: rs118192172
+    contig: chr19
+    position: 38457545
     ref: C
     alt: T
     source: a_priori_RYR1
@@ -45,33 +175,23 @@ a_priori_variants:
     source: a_priori_RYR1
     evidence_tier: core_pathogenic
     exact_test_model: carrier_vs_noncarrier
-  - label: CPT2 Ser113Leu
-    gene: CPT2
-    rsid: rs74315294
-    contig: chr1
-    position: 53202427
-    ref: C
-    alt: T
-    source: CPT2_myopathic_form
+  - label: RYR1 Arg4737Gln
+    gene: RYR1
+    rsid: rs193922868
+    contig: chr19
+    position: 38577955
+    ref: G
+    alt: A
+    source: a_priori_RYR1
     evidence_tier: core_pathogenic
     exact_test_model: carrier_vs_noncarrier
-  - label: CACNA1S Arg1086His
-    gene: CACNA1S
-    rsid: rs1800559
-    contig: chr1
-    position: 201060815
+  - label: RYR1 Thr4826Ile
+    gene: RYR1
+    rsid: rs121918595
+    contig: chr19
+    position: 38580094
     ref: C
     alt: T
-    source: MH_ER_related
-    evidence_tier: core_pathogenic
-    exact_test_model: carrier_vs_noncarrier
-  - label: PYGM Arg50Ter
-    gene: PYGM
-    rsid: rs116987552
-    contig: chr11
-    position: 64526623
-    ref: C
-    alt: T
-    source: McArdle_candidate
+    source: a_priori_RYR1
     evidence_tier: core_pathogenic
     exact_test_model: carrier_vs_noncarrier
