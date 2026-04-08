@@ -77,12 +77,18 @@ def _choose_bucket(resources: Iterable[dict[str, Any]], *, genomics: bool) -> st
 
 def _choose_cdr(resources: Iterable[dict[str, Any]]) -> str | None:
     datasets = [item for item in resources if item.get("resourceType") == "BQ_DATASET"]
-    candidates: list[tuple[str, str]] = []
+    candidates: list[tuple[tuple[int, str], str]] = []
     for item in datasets:
         project_id = item.get("projectId")
         dataset_id = item.get("datasetId")
         if project_id and dataset_id:
-            candidates.append((dataset_id, f"{project_id}.{dataset_id}"))
+            lowered = dataset_id.lower()
+            rank = 2
+            if lowered.startswith("prep_"):
+                rank = 1
+            elif lowered.startswith("c20"):
+                rank = 3
+            candidates.append(((rank, dataset_id), f"{project_id}.{dataset_id}"))
     if not candidates:
         return None
     candidates.sort(key=lambda row: row[0], reverse=True)

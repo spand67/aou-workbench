@@ -26,11 +26,23 @@ Install the optional Workbench extras inside a Hail-capable notebook environment
 python -m pip install -e ".[workbench]"
 ```
 
+On All of Us Researcher Workbench, prefer this flow because Hail is already provided by the image:
+
+```bash
+python -m pip install --user --no-deps -e .
+```
+
+Install the separate Hail extra only on environments that do not already ship Hail:
+
+```bash
+python -m pip install -e ".[workbench,hail]"
+```
+
 If a Workbench session already pulled in `numpy>=2` and started failing with `pyarrow` or `_ARRAY_API` errors, repair the environment with:
 
 ```bash
 python -m pip install --user --force-reinstall "numpy<2" "pandas<2.2" "scipy<1.12"
-python -m pip install --user --force-reinstall -e ".[workbench]"
+python -m pip install --user --no-deps --force-reinstall -e .
 ```
 
 ## Common commands

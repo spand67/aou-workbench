@@ -19,7 +19,9 @@ dependencies = [
 dev = ["pytest>=8.0"]
 workbench = [
   "google-cloud-bigquery>=3.25",
-  "hail>=0.2",
+]
+hail = [
+  "hail>=0.2,<0.3",
 ]
 
 [project.scripts]

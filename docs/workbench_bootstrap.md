@@ -5,7 +5,7 @@ Use this repository as the Git source of truth and keep your All of Us Researche
 ## Recommended flow
 
 1. Create or pull `spand67/aou-workbench` into your Workbench persistent disk.
-2. Run `python -m pip install -e ".[workbench]"`.
+2. Run `python -m pip install --user --no-deps -e .`.
 3. Edit only configs and notebooks in Workbench if the change should be committed back here.
 4. Run `aou-workbench preflight` before any stage execution.
 5. Execute `aou-workbench run-all` or the stage-specific CLI commands.
@@ -19,7 +19,7 @@ Repair the session with:
 
 ```bash
 python -m pip install --user --force-reinstall "numpy<2" "pandas<2.2" "scipy<1.12"
-python -m pip install --user --force-reinstall -e ".[workbench]"
+python -m pip install --user --no-deps --force-reinstall -e .
 ```
 
 ## Bootstrap notebook
