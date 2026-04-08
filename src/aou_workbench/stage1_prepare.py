@@ -85,9 +85,9 @@ def _extract_from_callset(
     mt = mt.filter_rows(hl.is_defined(target_ht[mt.locus, mt.alleles]))
     mt = mt.annotate_rows(target=target_ht[mt.locus, mt.alleles])
     mt = mt.filter_rows(hl.is_defined(mt.target))
-    mt = mt.filter_entries(hl.is_defined(mt.GT) & (mt.GT.n_alt_alleles() > 0))
 
     entries = mt.entries()
+    entries = entries.filter(hl.is_defined(entries.GT) & (entries.GT.n_alt_alleles() > 0))
     frame = entries.select(
         person_id=hl.str(entries.s),
         variant_id=entries.target.variant_id,
