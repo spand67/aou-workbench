@@ -152,12 +152,19 @@ def apply_runtime_defaults(config: ProjectConfig, runtime: RuntimeDefaults | Non
         flagged_samples_path=workbench.flagged_samples_path,
         max_unrelated_path=workbench.max_unrelated_path,
     )
+    if updated.requester_pays_project:
+        os.environ.setdefault("GCS_REQUESTER_PAYS_PROJECT", updated.requester_pays_project)
     return replace(config, workbench=updated)
 
 
-def _check_local_or_gcs_path(path: str, name: str) -> PreflightCheck:
+def _check_local_or_gcs_path(path: str, name: str, requester_pays_project: str | None = None) -> PreflightCheck:
     if path.startswith("gs://"):
-        code, stdout, stderr = _run_command(["gsutil", "ls", path])
+        cmd = ["gsutil"]
+        project = requester_pays_project or os.getenv("GCS_REQUESTER_PAYS_PROJECT")
+        if project:
+            cmd.extend(["-u", project])
+        cmd.extend(["ls", path])
+        code, stdout, stderr = _run_command(cmd)
         if code == 0:
             detail = stdout or path
             return PreflightCheck(name=name, status="PASS", message=f"Can see `{path}`.", detail=detail)
@@ -220,7 +227,7 @@ def _bigquery_table_check(cdr: str | None, table_reference: str, name: str) -> P
 def _check_input_reference(cdr: str | None, reference: str, name: str) -> PreflightCheck:
     if _qualify_cdr_table(cdr, reference) or is_bigquery_table(reference):
         return _bigquery_table_check(cdr, reference, name)
-    return _check_local_or_gcs_path(reference, name)
+    return _check_local_or_gcs_path(reference, name, os.getenv("GCS_REQUESTER_PAYS_PROJECT"))
 
 
 def _bigquery_check(cdr: str | None) -> PreflightCheck:

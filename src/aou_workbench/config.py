@@ -7,7 +7,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .io_utils import load_yaml, slugify, stable_hash
 
-DEFAULT_GENOMICS_BUCKET = "gs://fc-aou-datasets-controlled"
+DEFAULT_GENOMICS_BUCKET = "gs://vwb-aou-datasets-controlled"
 DEFAULT_WORKSPACE_CDR = "fc-aou-cdr-prod.C2024Q3R9"
 DEFAULT_WGS_VDS_PATH = f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/vds/hail.vds"
 DEFAULT_VAT_PATH = (
