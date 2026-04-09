@@ -6,8 +6,7 @@ exact_match_columns:
   - is_female
   - ancestry_pred
 primary_case_tier: definite
-sensitivity_case_tiers:
-  - probable
+sensitivity_case_tiers: []
 covariate_columns:
   - age_at_index
   - is_female

@@ -33,7 +33,7 @@ def _match_predicate(
 
 def _empty_result_sql(*, columns: tuple[str, ...]) -> str:
     projection = ", ".join(columns)
-    return f"SELECT {projection} WHERE FALSE"
+    return f"SELECT {projection} FROM (SELECT 1 AS _unused) WHERE FALSE"
 
 
 def render_case_tier_sql(config: ProjectConfig, tier: CaseTierRule) -> str:

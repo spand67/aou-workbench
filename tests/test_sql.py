@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from aou_workbench.config import load_project_config
-from aou_workbench.phenotype_sql import render_case_tier_sql, render_covariate_sql
+from aou_workbench.phenotype_sql import _empty_result_sql, render_case_tier_sql, render_covariate_sql
 from tests.support import build_demo_project_tree
 
 
@@ -22,3 +22,8 @@ class SqlRenderingTests(unittest.TestCase):
         self.assertIn("5000", definite_sql)
         self.assertIn("condition_concept_id IN (100)", definite_sql)
         self.assertIn("person", covariate_sql)
+
+    def test_empty_result_sql_is_valid_for_condition_only_tiers(self) -> None:
+        sql = _empty_result_sql(columns=("CAST(NULL AS STRING) AS person_id",))
+        self.assertIn("FROM (SELECT 1 AS _unused)", sql)
+        self.assertIn("WHERE FALSE", sql)
