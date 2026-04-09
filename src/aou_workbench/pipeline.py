@@ -21,6 +21,7 @@ from .preflight import apply_runtime_defaults, assert_preflight_ok, run_prefligh
 from .reporting import load_table_if_exists, write_final_report
 from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
+from .stage2_prepare import prepare_stage2_variant_table
 from .stage2_plp_panel import run_stage2_plp_panel
 from .stage3_burden import run_stage3_burden
 from .stage4_gwas import run_stage4_gwas
@@ -96,7 +97,8 @@ def run_all(config: ProjectConfig, *, skip_preflight: bool = False) -> ProjectPa
         prepare_stage1_variant_table(effective, cohort_df)
         stage1_df = run_stage1_prior_variants(effective, cohort_df, paths)
     if effective.analysis.run_stage2:
-        stage2_variant_df, stage2_gene_df, _ = run_stage2_plp_panel(effective, matched_df, paths)
+        prepare_stage2_variant_table(effective, cohort_df)
+        stage2_variant_df, stage2_gene_df, _ = run_stage2_plp_panel(effective, cohort_df, paths)
     if effective.analysis.run_stage3:
         stage3_df = run_stage3_burden(effective, matched_df, paths)
     if effective.analysis.run_stage4:

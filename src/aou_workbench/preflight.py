@@ -398,8 +398,15 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
             )
         )
         checks.append(_planned_output_check(effective.analysis.stage1.variant_table, "output:stage1"))
-    if effective.analysis.run_stage2 and effective.analysis.stage2:
-        checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage2.variant_table, "input:stage2"))
+    if effective.analysis.stage2:
+        checks.append(
+            _check_local_or_gcs_path(
+                effective.workbench.clinvar_mt_path,
+                "input:clinvar_mt",
+                effective.workbench.requester_pays_project,
+            )
+        )
+        checks.append(_planned_output_check(effective.analysis.stage2.variant_table, "output:stage2"))
     if effective.analysis.run_stage3 and effective.analysis.stage3:
         checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage3.variant_table, "input:stage3"))
     if effective.analysis.run_stage4 and effective.analysis.stage4:

@@ -13,6 +13,7 @@ from .pipeline import build_cohort_artifacts, match_controls_artifacts, render_e
 from .preflight import apply_runtime_defaults, format_preflight_report, run_preflight_checks
 from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
+from .stage2_prepare import prepare_stage2_variant_table
 from .stage2_plp_panel import run_stage2_plp_panel
 from .stage3_burden import run_stage3_burden
 from .stage4_gwas import run_stage4_gwas
@@ -73,6 +74,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_config_arguments(prepare_stage1_parser)
 
+    prepare_stage2_parser = subparsers.add_parser(
+        "prepare-stage2",
+        help="Prepare the Stage 2 ClinVar genotype table from AoU smaller callsets.",
+    )
+    _add_config_arguments(prepare_stage2_parser)
+
     for name in ("run-stage1", "run-stage2", "run-stage3", "run-stage4", "run-all"):
         stage_parser = subparsers.add_parser(name, help=f"Execute {name}.")
         _add_config_arguments(stage_parser)
@@ -115,6 +122,17 @@ def main(argv: list[str] | None = None) -> int:
         print(stage.variant_table)
         return 0
 
+    if args.command == "prepare-stage2":
+        effective, _, cohort_df = _load_or_build_cohort_artifacts(config)
+        frame = prepare_stage2_variant_table(effective, cohort_df)
+        stage = effective.analysis.stage2
+        if stage is None:
+            print("Stage 2 is not configured.")
+            return 0
+        print(f"Prepared Stage 2 rows: {frame.shape[0]}")
+        print(stage.variant_table)
+        return 0
+
     if args.command == "run-all":
         paths = run_all(config, skip_preflight=args.skip_preflight)
         print(f"Run root: {paths.run_root}")
@@ -128,13 +146,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Stage 1 rows: {frame.shape[0]}")
             print(paths.stage1_results_tsv)
             return 0
-        effective, paths, matched_df = _load_or_build_matched_artifacts(config)
         if args.command == "run-stage2":
-            _, gene_df, person_df = run_stage2_plp_panel(effective, matched_df, paths)
+            effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
+            _, gene_df, person_df = run_stage2_plp_panel(effective, cohort_df, paths)
             print(f"Stage 2 genes: {gene_df.shape[0]}")
             print(f"Stage 2 people with hits: {person_df.shape[0]}")
             print(paths.stage2_gene_tsv)
             return 0
+        effective, paths, matched_df = _load_or_build_matched_artifacts(config)
         if args.command == "run-stage3":
             frame = run_stage3_burden(effective, matched_df, paths)
             print(f"Stage 3 rows: {frame.shape[0]}")

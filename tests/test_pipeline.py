@@ -9,6 +9,7 @@ import pandas as pd
 from aou_workbench.config import load_project_config
 from aou_workbench.pipeline import run_all
 from aou_workbench.stage1_prepare import stage1_sample_manifest_path
+from aou_workbench.stage2_prepare import stage2_sample_manifest_path
 from tests.support import build_demo_project_tree
 
 
@@ -28,10 +29,20 @@ class PipelineIntegrationTests(unittest.TestCase):
             sep="\t",
             index=False,
         )
-        with mock.patch("aou_workbench.pipeline.prepare_stage1_variant_table") as mock_prepare:
-            mock_prepare.return_value = pd.read_csv(paths["stage1_table"], sep="\t")
+        pd.DataFrame({"person_id": cohort_df["person_id"].astype(str)}).to_csv(
+            stage2_sample_manifest_path(paths["stage2_table"]),
+            sep="\t",
+            index=False,
+        )
+        with (
+            mock.patch("aou_workbench.pipeline.prepare_stage1_variant_table") as mock_prepare_stage1,
+            mock.patch("aou_workbench.pipeline.prepare_stage2_variant_table") as mock_prepare_stage2,
+        ):
+            mock_prepare_stage1.return_value = pd.read_csv(paths["stage1_table"], sep="\t")
+            mock_prepare_stage2.return_value = pd.read_csv(paths["stage2_table"], sep="\t")
             output_paths = run_all(config, skip_preflight=True)
-        mock_prepare.assert_called_once()
+        mock_prepare_stage1.assert_called_once()
+        mock_prepare_stage2.assert_called_once()
         expected = [
             output_paths.built_cohort_tsv,
             output_paths.matched_cohort_tsv,
