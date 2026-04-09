@@ -29,6 +29,12 @@ def _normalized_chromosome_values(chromosome: str) -> set[str]:
     return {f"chr{bare}"}
 
 
+def _split_acaf_mt_path(path: str) -> str:
+    if "/multiMT/" in path:
+        return path.replace("/multiMT/", "/splitMT/")
+    return path
+
+
 def _matched_sample_frame(matched_df: pd.DataFrame, config: ProjectConfig) -> pd.DataFrame:
     covariates = [column for column in config.analysis.stage4.covariates if column in matched_df.columns]
     columns = ["person_id", config.analysis.matched_outcome_column, *covariates]
@@ -66,15 +72,15 @@ def prepare_stage4_acaf_subset(
         requester_pays_project=config.workbench.requester_pays_project,
         requester_pays_buckets=config.workbench.requester_pays_buckets,
     )
-    print(f"Reading ACAF MT from {config.workbench.acaf_mt_path}", flush=True)
-    mt = hl.read_matrix_table(config.workbench.acaf_mt_path)
+    acaf_mt_path = _split_acaf_mt_path(config.workbench.acaf_mt_path)
+    print(f"Reading ACAF MT from {acaf_mt_path}", flush=True)
+    mt = hl.read_matrix_table(acaf_mt_path)
 
     sample_set = hl.literal(set(sample_ids))
     chrom_set = hl.literal(chromosome_values)
     mt = mt.filter_cols(sample_set.contains(mt.s))
     mt = mt.filter_rows(chrom_set.contains(mt.locus.contig))
-    print(f"Filtering ACAF MT to matched samples and {chromosome} before splitting multiallelics.", flush=True)
-    mt = hl.split_multi_hts(mt)
+    print(f"Filtering ACAF MT to matched samples and {chromosome}.", flush=True)
 
     sample_ht = hl.Table.from_pandas(sample_df).key_by("person_id")
     mt = mt.annotate_cols(sample=sample_ht[mt.s])
@@ -190,7 +196,7 @@ def prepare_stage4_acaf_subset(
             "nonref_entries_written": int(len(genotype_df)),
             "plink_prefix": plink_prefix,
             "pilot_result_path": pilot_result_path,
-            "acaf_mt_path": config.workbench.acaf_mt_path,
+            "acaf_mt_path": acaf_mt_path,
         },
         meta_path,
     )

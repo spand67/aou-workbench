@@ -20,7 +20,7 @@ DEFAULT_CLINVAR_MT_PATH = (
     f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/clinvar/multiMT/hail.mt"
 )
 DEFAULT_ACAF_MT_PATH = (
-    f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/acaf_threshold/multiMT/hail.mt"
+    f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/acaf_threshold/splitMT/hail.mt"
 )
 DEFAULT_COVARIATES = (
     "age_at_index",
