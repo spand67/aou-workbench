@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from .config import ProjectConfig
@@ -15,23 +14,50 @@ def _control_anchor_date(controls: pd.DataFrame) -> pd.Series:
     return controls["baseline_index_date"].combine_first(midpoint)
 
 
-def match_case_controls(cohort_df: pd.DataFrame, config: ProjectConfig) -> pd.DataFrame:
+def _match_stratum_key(frame: pd.DataFrame, columns: tuple[str, ...]) -> pd.Series:
+    if not columns:
+        return pd.Series([tuple()] * len(frame), index=frame.index, dtype=object)
+    parts = [frame[column].fillna("__MISSING__").astype(str) for column in columns if column in frame.columns]
+    if not parts:
+        return pd.Series([tuple()] * len(frame), index=frame.index, dtype=object)
+    tuples = list(zip(*(part.tolist() for part in parts), strict=False))
+    return pd.Series(tuples, index=frame.index, dtype=object)
+
+
+def _prepare_matching_inputs(cohort_df: pd.DataFrame, config: ProjectConfig) -> tuple[pd.DataFrame, dict[tuple[str, ...], pd.DataFrame]]:
     cases = cohort_df[cohort_df["case_tier"] == config.cohort.primary_case_tier].copy()
     controls = cohort_df[cohort_df["eligible_control"]].copy()
     if cases.empty or controls.empty:
+        return cases, {}
+
+    cases["person_id"] = cases["person_id"].astype(str)
+    controls["person_id"] = controls["person_id"].astype(str)
+    cases["match_stratum_key"] = _match_stratum_key(cases, config.cohort.exact_match_columns)
+    controls["match_stratum_key"] = _match_stratum_key(controls, config.cohort.exact_match_columns)
+    controls["control_anchor_date"] = _control_anchor_date(controls)
+
+    control_groups: dict[tuple[str, ...], pd.DataFrame] = {}
+    for key, chunk in controls.groupby("match_stratum_key", dropna=False, sort=False):
+        control_groups[key] = chunk.sort_values(["age_at_index", "person_id"]).copy()
+    return cases, control_groups
+
+
+def match_case_controls(cohort_df: pd.DataFrame, config: ProjectConfig) -> pd.DataFrame:
+    cases, control_groups = _prepare_matching_inputs(cohort_df, config)
+    if cases.empty or not control_groups:
         return pd.DataFrame(columns=list(cohort_df.columns) + ["analysis_case", "match_group_id"])
 
-    controls["control_anchor_date"] = _control_anchor_date(controls)
     used_controls: set[str] = set()
     matched_rows: list[pd.Series] = []
 
     for case in cases.sort_values(["index_date", "person_id"]).itertuples(index=False):
-        pool = controls.copy()
+        pool = control_groups.get(getattr(case, "match_stratum_key"), pd.DataFrame()).copy()
+        if pool.empty:
+            continue
         if not config.cohort.allow_reuse_controls:
             pool = pool[~pool["person_id"].isin(used_controls)]
-        for column in config.cohort.exact_match_columns:
-            if column in pool.columns:
-                pool = pool[pool[column].fillna("__MISSING__") == getattr(case, column)]
+        if pool.empty:
+            continue
         case_index_date = getattr(case, "index_date")
         if pd.notna(case_index_date):
             pool = pool[
