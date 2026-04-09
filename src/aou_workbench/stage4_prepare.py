@@ -68,12 +68,13 @@ def prepare_stage4_acaf_subset(
     )
     print(f"Reading ACAF MT from {config.workbench.acaf_mt_path}", flush=True)
     mt = hl.read_matrix_table(config.workbench.acaf_mt_path)
-    mt = hl.split_multi_hts(mt)
 
     sample_set = hl.literal(set(sample_ids))
     chrom_set = hl.literal(chromosome_values)
     mt = mt.filter_cols(sample_set.contains(mt.s))
     mt = mt.filter_rows(chrom_set.contains(mt.locus.contig))
+    print(f"Filtering ACAF MT to matched samples and {chromosome} before splitting multiallelics.", flush=True)
+    mt = hl.split_multi_hts(mt)
 
     sample_ht = hl.Table.from_pandas(sample_df).key_by("person_id")
     mt = mt.annotate_cols(sample=sample_ht[mt.s])
