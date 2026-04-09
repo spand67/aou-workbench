@@ -13,12 +13,8 @@ import tempfile
 import pandas as pd
 
 from .config import ProjectConfig, TargetVariant
-from .hail_utils import ensure_hail
 from .io_utils import ensure_parent_dir, write_dataframe, write_json
 from .preflight import apply_runtime_defaults
-
-
-HAIL_REFERENCE = "GRCh38"
 
 
 def _callset_root(path: str) -> str:
@@ -62,14 +58,6 @@ def _matched_person_ids(matched_df: pd.DataFrame) -> list[str]:
         raise ValueError("Matched cohort is missing the required 'person_id' column.")
     ids = matched_df["person_id"].astype(str).dropna().drop_duplicates().sort_values()
     return ids.tolist()
-
-
-def _callset_paths(config: ProjectConfig) -> dict[str, str]:
-    return {
-        "acaf": _split_mt_path(config.workbench.acaf_mt_path),
-        "exome": _split_mt_path(config.workbench.exome_mt_path),
-        "clinvar": _split_mt_path(config.workbench.clinvar_mt_path),
-    }
 
 
 def _vcf_callset_paths(config: ProjectConfig) -> dict[str, str]:
@@ -154,9 +142,9 @@ def _extract_from_vcf_callset(
     if target_df.empty or not sample_ids:
         return pd.DataFrame()
     if shutil.which("bcftools") is None:
-        raise RuntimeError("bcftools is required for non-Hail Stage 1 extraction.")
+        raise RuntimeError("bcftools is required for Stage 1 smaller-callset extraction.")
     if shutil.which("gsutil") is None:
-        raise RuntimeError("gsutil is required for non-Hail Stage 1 extraction.")
+        raise RuntimeError("gsutil is required for Stage 1 smaller-callset extraction.")
 
     contigs = sorted(target_df["contig"].dropna().astype(str).unique())
     remote_vcfs = _discover_remote_vcf_shards(config, vcf_root, contigs)
@@ -278,60 +266,6 @@ def _extract_from_vcf_callset(
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
-def _extract_from_callset(
-    hl,
-    *,
-    callset_name: str,
-    mt_path: str,
-    target_df: pd.DataFrame,
-    sample_ids: list[str],
-) -> pd.DataFrame:
-    if target_df.empty or not sample_ids:
-        return pd.DataFrame()
-
-    mt = hl.read_matrix_table(mt_path)
-    sample_set = hl.literal(set(sample_ids))
-    mt = mt.filter_cols(sample_set.contains(hl.str(mt.s)))
-
-    target_ht = hl.Table.from_pandas(target_df)
-    target_ht = target_ht.annotate(
-        locus=hl.locus(target_ht.contig, hl.int32(target_ht.position), reference_genome=HAIL_REFERENCE),
-        alleles=[target_ht.ref, target_ht.alt],
-    ).key_by("locus", "alleles")
-
-    mt = mt.filter_rows(hl.is_defined(target_ht[mt.locus, mt.alleles]))
-    mt = mt.annotate_rows(target=target_ht[mt.locus, mt.alleles])
-    mt = mt.filter_rows(hl.is_defined(mt.target))
-    mt = mt.key_cols_by()
-
-    entries = mt.entries()
-    entries = entries.filter(hl.is_defined(entries.GT) & (entries.GT.n_alt_alleles() > 0))
-    entries = entries.select(
-        person_id=hl.str(entries.s),
-        variant_id=entries.target.variant_id,
-        gene=entries.target.gene,
-        label=entries.target.label,
-        rsid=entries.target.rsid,
-        source=entries.target.source,
-        evidence_tier=entries.target.evidence_tier,
-        exact_test_model=entries.target.exact_test_model,
-        dosage=hl.float64(entries.GT.n_alt_alleles()),
-        callset=hl.str(callset_name),
-    )
-    temp_root = tempfile.mkdtemp(prefix=f"stage1-{callset_name}-")
-    export_path = os.path.join(temp_root, "entries.tsv.bgz")
-    try:
-        entries.export(export_path)
-        frame = pd.read_csv(export_path, sep="\t")
-    finally:
-        shutil.rmtree(temp_root, ignore_errors=True)
-    if frame.empty:
-        return frame
-    frame["person_id"] = frame["person_id"].astype(str)
-    frame["variant_id"] = frame["variant_id"].astype(str)
-    return frame
-
-
 def _collapse_stage1_rows(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(
@@ -394,7 +328,6 @@ def prepare_stage1_variant_table(
     attempted: dict[str, str] = {}
     failures: dict[str, str] = {}
     vcf_paths = _vcf_callset_paths(config)
-    mt_paths = _callset_paths(config)
     for callset_name, vcf_root in vcf_paths.items():
         attempted[callset_name] = vcf_root
         print(f"Reading {callset_name} callset from {vcf_root}", flush=True)
@@ -407,42 +340,22 @@ def prepare_stage1_variant_table(
                 sample_ids=sample_ids,
             )
         except Exception as exc:
-            print(f"{callset_name} VCF path failed: {type(exc).__name__}: {exc}", flush=True)
-            hl = None
-            try:
-                mt_path = mt_paths[callset_name]
-                print(f"Falling back to Hail for {callset_name} using {mt_path}", flush=True)
-                hl = ensure_hail(
-                    HAIL_REFERENCE,
-                    requester_pays_project=config.workbench.requester_pays_project,
-                    requester_pays_buckets=config.workbench.requester_pays_buckets,
-                )
-                frame = _extract_from_callset(
-                    hl,
-                    callset_name=callset_name,
-                    mt_path=mt_path,
-                    target_df=target_df,
-                    sample_ids=sample_ids,
-                )
-            except Exception as fallback_exc:
-                failures[callset_name] = f"{type(fallback_exc).__name__}: {fallback_exc}"
-                print(f"{callset_name} failed: {type(fallback_exc).__name__}: {fallback_exc}", flush=True)
-                continue
-            finally:
-                try:
-                    if hl is not None:
-                        hl.stop()
-                except Exception:
-                    pass
+            failures[callset_name] = f"{type(exc).__name__}: {exc}"
+            print(f"{callset_name} failed: {type(exc).__name__}: {exc}", flush=True)
+            continue
         if not frame.empty:
             frames.append(frame)
             print(f"{callset_name} yielded {len(frame)} non-reference genotype rows.", flush=True)
         else:
             print(f"{callset_name} yielded 0 non-reference genotype rows.", flush=True)
 
-    if not frames and failures:
+    if failures:
         details = "\n".join(f"- {name}: {message}" for name, message in failures.items())
-        raise RuntimeError(f"Stage 1 extraction failed for all callsets.\n{details}")
+        raise RuntimeError(
+            "Stage 1 extraction requires the AoU smaller-callset VCF workflow and a tool-ready environment.\n"
+            "Install or use an environment with `bcftools` and `gsutil`, then retry.\n"
+            f"{details}"
+        )
 
     combined = _collapse_stage1_rows(pd.concat(frames, ignore_index=True) if frames else pd.DataFrame())
     write_dataframe(combined, output_path)
@@ -470,6 +383,5 @@ __all__ = [
     "_gt_to_dosage",
     "_normalize_contig",
     "_panel_targets_frame",
-    "_split_mt_path",
     "_vcf_root",
 ]

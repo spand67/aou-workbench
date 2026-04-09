@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 import json
 import os
+import shutil
 import subprocess
 from typing import Any, Iterable
 
@@ -267,35 +268,38 @@ def _bigquery_check(cdr: str | None) -> PreflightCheck:
 
 def _hail_check(config: ProjectConfig) -> PreflightCheck:
     try:
-        import hail as hl  # type: ignore
+        import hail  # type: ignore
     except ImportError as exc:
         return PreflightCheck(
-            name="hail:init",
+            name="hail:available",
             status="WARN",
-            message="Skipped Hail initialization because hail is unavailable.",
+            message="Hail is unavailable in this environment.",
             detail=str(exc),
         )
-    try:  # pragma: no cover - environment dependent
-        kwargs: dict[str, Any] = {}
-        if config.workbench.requester_pays_project:
-            kwargs["gcs_requester_pays_configuration"] = (
-                config.workbench.requester_pays_project,
-                list(config.workbench.requester_pays_buckets),
-            )
-        hl.init(**kwargs)
-        hl.default_reference(new_default_reference="GRCh38")
+    version = getattr(hail, "__version__", "unknown")
+    return PreflightCheck(
+        name="hail:available",
+        status="PASS",
+        message="Hail is importable for larger MT/VDS analyses.",
+        detail=f"Version: {version}",
+    )
+
+
+def _tool_check(command: str, *, name: str, required_for: str) -> PreflightCheck:
+    path = shutil.which(command)
+    if path:
         return PreflightCheck(
-            name="hail:init",
+            name=name,
             status="PASS",
-            message="Hail initialized successfully.",
+            message=f"`{command}` is available.",
+            detail=path,
         )
-    except Exception as exc:
-        return PreflightCheck(
-            name="hail:init",
-            status="FAIL",
-            message="Hail could not initialize cleanly.",
-            detail=f"{type(exc).__name__}: {exc}",
-        )
+    return PreflightCheck(
+        name=name,
+        status="WARN",
+        message=f"`{command}` is unavailable.",
+        detail=f"Required for {required_for}. Use an AoU app image with this tool or install it before running that stage.",
+    )
 
 
 def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
@@ -369,6 +373,8 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
     if effective.analysis.run_stage4 and effective.analysis.stage4:
         checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage4.genotype_table, "input:stage4"))
     checks.append(_bigquery_check(effective.workbench.workspace_cdr))
+    checks.append(_tool_check("gsutil", name="tool:gsutil", required_for="Workbench bucket and genomics bucket access"))
+    checks.append(_tool_check("bcftools", name="tool:bcftools", required_for="Stage 1 smaller-callset VCF extraction"))
     checks.append(_hail_check(effective))
     for warning in runtime.warnings:
         checks.append(
