@@ -75,7 +75,7 @@ set -euo pipefail
 # AoU documents the source data under:
 # gs://fc-aou-datasets-controlled/v8/wgs/short_read/snpindel/acaf_threshold/pgen/
 STEP1_PGEN_PREFIX="/path/to/acaf_step1_pruned_prefix"
-STEP2_PGEN_PREFIX="/path/to/acaf_chr${{CHR}}"
+STEP2_PGEN_PREFIX_TEMPLATE="/path/to/acaf_chr{{CHR}}"
 OUTDIR="{regenie_output_dir(paths)}"
 
 mkdir -p "$OUTDIR"
@@ -94,6 +94,7 @@ regenie \\
   --out "$OUTDIR/step1"
 
 for CHR in {{1..22}}; do
+  STEP2_PGEN_PREFIX="${{STEP2_PGEN_PREFIX_TEMPLATE/\{{CHR\}}/${{CHR}}}}"
   regenie \\
     --step 2 \\
     --pgen "${{STEP2_PGEN_PREFIX}}" \\

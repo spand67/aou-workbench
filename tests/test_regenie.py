@@ -44,6 +44,8 @@ class RegeniePreparationTests(unittest.TestCase):
         self.assertIn("--step 1", commands)
         self.assertIn("--step 2", commands)
         self.assertIn("--catCovarList \"ancestry_pred\"", commands)
+        self.assertIn("STEP2_PGEN_PREFIX_TEMPLATE", commands)
+        self.assertIn("STEP2_PGEN_PREFIX=\"${STEP2_PGEN_PREFIX_TEMPLATE/", commands)
 
 
 if __name__ == "__main__":
