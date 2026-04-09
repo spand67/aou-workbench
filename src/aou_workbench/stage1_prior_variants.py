@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from .config import ProjectConfig
@@ -13,6 +11,17 @@ from .io_utils import read_table, write_dataframe, write_json
 from .paths import ProjectPaths
 from .reporting import write_stage_report
 from .statistics import bh_fdr, run_binary_logistic_regression, summarize_binary_exposure
+
+
+def _variant_exposure(
+    subset: pd.DataFrame,
+    *,
+    exact_test_model: str,
+) -> tuple[pd.Series, float]:
+    dosage = subset.groupby("person_id")["dosage"].max() if not subset.empty else pd.Series(dtype=float)
+    if exact_test_model == "hom_alt_vs_rest":
+        return (dosage >= 2.0).astype(float), 1.0
+    return dosage, 1.0
 
 
 def run_stage1_prior_variants(
@@ -56,12 +65,15 @@ def run_stage1_prior_variants(
     rows: list[dict[str, Any]] = []
     for variant in requested.itertuples(index=False):
         subset = raw[raw["variant_id"] == variant.variant_id]
-        exposure = subset.groupby("person_id")["dosage"].max() if not subset.empty else pd.Series(dtype=float)
+        exposure, carrier_threshold = _variant_exposure(
+            subset,
+            exact_test_model=variant.exact_test_model,
+        )
         counts = summarize_binary_exposure(
             matched_df,
             exposure,
             outcome_column=config.analysis.matched_outcome_column,
-            carrier_threshold=stage.carrier_min_dosage,
+            carrier_threshold=carrier_threshold,
         )
         regression = run_binary_logistic_regression(
             matched_df,
@@ -77,6 +89,7 @@ def run_stage1_prior_variants(
                 "rsid": variant.rsid,
                 "source": variant.source,
                 "evidence_tier": variant.evidence_tier,
+                "exact_test_model": variant.exact_test_model,
                 **counts,
                 **regression,
             }
@@ -109,4 +122,4 @@ def run_stage1_prior_variants(
     return result
 
 
-__all__ = ["run_stage1_prior_variants"]
+__all__ = ["run_stage1_prior_variants", "_variant_exposure"]

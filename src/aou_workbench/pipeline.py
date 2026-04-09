@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 
 import pandas as pd
@@ -20,6 +19,7 @@ from .phenotype_sql import (
 )
 from .preflight import apply_runtime_defaults, assert_preflight_ok, run_preflight_checks
 from .reporting import load_table_if_exists, write_final_report
+from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_plp_panel import run_stage2_plp_panel
 from .stage3_burden import run_stage3_burden
@@ -93,6 +93,7 @@ def run_all(config: ProjectConfig, *, skip_preflight: bool = False) -> ProjectPa
     stage3_df = pd.DataFrame()
     stage4_lead_hits = pd.DataFrame()
     if effective.analysis.run_stage1:
+        prepare_stage1_variant_table(effective, matched_df)
         stage1_df = run_stage1_prior_variants(effective, matched_df, paths)
     if effective.analysis.run_stage2:
         stage2_variant_df, stage2_gene_df, _ = run_stage2_plp_panel(effective, matched_df, paths)

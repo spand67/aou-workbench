@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import unittest
+from unittest import mock
+
+import pandas as pd
 
 from aou_workbench.config import load_project_config
 from aou_workbench.pipeline import run_all
@@ -18,7 +21,10 @@ class PipelineIntegrationTests(unittest.TestCase):
             panel_path=paths["panel"],
             analysis_path=paths["analysis"],
         )
-        output_paths = run_all(config, skip_preflight=True)
+        with mock.patch("aou_workbench.pipeline.prepare_stage1_variant_table") as mock_prepare:
+            mock_prepare.return_value = pd.read_csv(paths["stage1_table"], sep="\t")
+            output_paths = run_all(config, skip_preflight=True)
+        mock_prepare.assert_called_once()
         expected = [
             output_paths.built_cohort_tsv,
             output_paths.matched_cohort_tsv,

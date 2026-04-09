@@ -123,6 +123,8 @@ def run_binary_logistic_regression(
         }
     try:
         opt = minimize(_logistic_nll, np.zeros(x.shape[1]), args=(x, y), method="BFGS")
+        if not opt.success:
+            raise RuntimeError(opt.message)
         beta = opt.x
         cov = np.asarray(opt.hess_inv.todense() if hasattr(opt.hess_inv, "todense") else opt.hess_inv)
         se = math.sqrt(max(cov[1, 1], 0.0))
