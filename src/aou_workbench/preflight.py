@@ -280,7 +280,7 @@ def _hail_check(config: ProjectConfig) -> PreflightCheck:
     return PreflightCheck(
         name="hail:available",
         status="PASS",
-        message="Hail is importable for larger MT/VDS analyses.",
+        message="Hail is importable for direct WGS VDS extraction and broader MT/VDS analyses.",
         detail=f"Version: {version}",
     )
 
@@ -367,6 +367,13 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
             )
         )
     if effective.analysis.run_stage1 and effective.analysis.stage1:
+        checks.append(
+            _check_local_or_gcs_path(
+                effective.workbench.wgs_vds_path,
+                "input:wgs_vds",
+                effective.workbench.requester_pays_project,
+            )
+        )
         checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage1.variant_table, "input:stage1"))
     if effective.analysis.run_stage2 and effective.analysis.stage2:
         checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage2.variant_table, "input:stage2"))
@@ -376,14 +383,6 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
         checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage4.genotype_table, "input:stage4"))
     checks.append(_bigquery_check(effective.workbench.workspace_cdr))
     checks.append(_tool_check("gsutil", name="tool:gsutil", required_for="Workbench bucket and genomics bucket access"))
-    checks.append(
-        _tool_check(
-            "bcftools",
-            name="tool:bcftools",
-            required_for="Stage 1 smaller-callset VCF extraction",
-            override_env="AOU_WORKBENCH_BCFTOOLS",
-        )
-    )
     checks.append(_hail_check(effective))
     for warning in runtime.warnings:
         checks.append(

@@ -1,160 +1,116 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
-from unittest import mock
 
 import pandas as pd
 
 from aou_workbench.config import load_project_config
 from aou_workbench.stage1_prepare import (
-    _callset_root,
     _collapse_stage1_rows,
-    _discover_remote_vcf_shards,
-    _gt_to_dosage,
-    _interval_file_overlaps_targets,
-    _normalize_contig,
+    _matched_person_ids,
     _panel_targets_frame,
-    _split_mt_path,
-    _target_positions_by_contig,
-    _vcf_root,
+    _target_interval_strings,
 )
 from tests.support import build_demo_project_tree
 
 
 class Stage1PrepareTests(unittest.TestCase):
-    def test_split_mt_path_normalizes_known_layouts(self) -> None:
-        self.assertEqual(
-            _split_mt_path("gs://bucket/v8/wgs/short_read/snpindel/exome/multiMT/hail.mt"),
-            "gs://bucket/v8/wgs/short_read/snpindel/exome/splitMT/hail.mt",
-        )
-        self.assertEqual(
-            _split_mt_path("gs://bucket/v8/wgs/short_read/snpindel/acaf_threshold/hail.mt"),
-            "gs://bucket/v8/wgs/short_read/snpindel/acaf_threshold/splitMT/hail.mt",
-        )
-        self.assertEqual(
-            _callset_root("gs://bucket/v8/wgs/short_read/snpindel/clinvar/splitMT/hail.mt"),
-            "gs://bucket/v8/wgs/short_read/snpindel/clinvar",
-        )
-        self.assertEqual(
-            _vcf_root("gs://bucket/v8/wgs/short_read/snpindel/acaf_threshold/hail.mt"),
-            "gs://bucket/v8/wgs/short_read/snpindel/acaf_threshold/vcf",
-        )
-
-    def test_panel_targets_frame_uses_project_variant_ids(self) -> None:
+    def setUp(self) -> None:
         paths = build_demo_project_tree()
-        config = load_project_config(
+        self.config = load_project_config(
             workbench_path=paths["workbench"],
             phenotype_path=paths["phenotype"],
             cohort_path=paths["cohort"],
             panel_path=paths["panel"],
             analysis_path=paths["analysis"],
         )
-        frame = _panel_targets_frame(config.panel.a_priori_variants)
-        self.assertIn("11-5227002-T-A", set(frame["variant_id"]))
-        self.assertIn("19-38451842-C-T", set(frame["variant_id"]))
 
-    def test_collapse_stage1_rows_deduplicates_across_callsets(self) -> None:
+    def test_panel_targets_frame_preserves_variant_metadata(self) -> None:
+        frame = _panel_targets_frame(self.config.panel.a_priori_variants)
+
+        self.assertEqual(frame.shape[0], 6)
+        self.assertEqual(
+            frame["variant_id"].tolist(),
+            [
+                "11-5227002-T-A",
+                "19-38451842-C-T",
+                "19-38499993-G-A",
+                "1-53202427-C-T",
+                "1-201060815-C-T",
+                "11-64526623-C-T",
+            ],
+        )
+        self.assertTrue((frame["exact_test_model"] == "carrier_vs_noncarrier").all())
+
+    def test_matched_person_ids_sorts_and_deduplicates(self) -> None:
+        matched_df = pd.DataFrame({"person_id": [5, "2", 5, 1, "10"]})
+
+        self.assertEqual(_matched_person_ids(matched_df), ["1", "10", "2", "5"])
+
+    def test_target_interval_strings_pad_and_sort_targets(self) -> None:
+        frame = _panel_targets_frame(self.config.panel.a_priori_variants)
+
+        self.assertEqual(
+            _target_interval_strings(frame, pad_bp=5),
+            [
+                "chr11:5226997-5227007",
+                "chr11:64526618-64526628",
+                "chr19:38451837-38451847",
+                "chr19:38499988-38499998",
+                "chr1:201060810-201060820",
+                "chr1:53202422-53202432",
+            ],
+        )
+
+    def test_collapse_stage1_rows_keeps_max_dosage_and_merges_callsets(self) -> None:
         frame = pd.DataFrame(
             [
                 {
-                    "person_id": "101",
+                    "person_id": "1",
                     "variant_id": "11-5227002-T-A",
                     "gene": "HBB",
                     "label": "HBB sickle trait",
                     "rsid": "rs334",
-                    "source": "Deuster2013",
+                    "source": "literature",
                     "evidence_tier": "candidate_common",
                     "exact_test_model": "carrier_vs_noncarrier",
                     "dosage": 1.0,
-                    "callset": "acaf",
+                    "callset": "wgs_vds",
                 },
                 {
-                    "person_id": "101",
+                    "person_id": "1",
                     "variant_id": "11-5227002-T-A",
                     "gene": "HBB",
                     "label": "HBB sickle trait",
                     "rsid": "rs334",
-                    "source": "Deuster2013",
+                    "source": "literature",
                     "evidence_tier": "candidate_common",
                     "exact_test_model": "carrier_vs_noncarrier",
                     "dosage": 2.0,
-                    "callset": "clinvar",
+                    "callset": "legacy_exact",
+                },
+                {
+                    "person_id": "2",
+                    "variant_id": "19-38451842-C-T",
+                    "gene": "RYR1",
+                    "label": "RYR1 Arg401Cys",
+                    "rsid": "rs193922764",
+                    "source": "a_priori",
+                    "evidence_tier": "core_pathogenic",
+                    "exact_test_model": "carrier_vs_noncarrier",
+                    "dosage": 1.0,
+                    "callset": "wgs_vds",
                 },
             ]
         )
+
         collapsed = _collapse_stage1_rows(frame)
-        self.assertEqual(len(collapsed), 1)
-        self.assertEqual(collapsed.loc[0, "dosage"], 2.0)
-        self.assertEqual(collapsed.loc[0, "callset"], "acaf,clinvar")
 
-    def test_genotype_dosage_and_contig_normalization_helpers(self) -> None:
-        self.assertEqual(_gt_to_dosage("0/0"), 0.0)
-        self.assertEqual(_gt_to_dosage("0/1"), 1.0)
-        self.assertEqual(_gt_to_dosage("1|1"), 2.0)
-        self.assertEqual(_gt_to_dosage("./."), 0.0)
-        self.assertEqual(_normalize_contig("1"), "chr1")
-        self.assertEqual(_normalize_contig("chr19"), "chr19")
-
-    def test_interval_file_overlap_uses_target_positions(self) -> None:
-        targets = _target_positions_by_contig(
-            pd.DataFrame(
-                [
-                    {"contig": "chr1", "position": 100},
-                    {"contig": "chr1", "position": 220},
-                    {"contig": "chr19", "position": 500},
-                ]
-            )
-        )
-        with tempfile.NamedTemporaryFile("w", suffix=".interval_list") as handle:
-            handle.write("@HD\tVN:1.6\tSO:coordinate\n")
-            handle.write("chr1\t90\t110\t+\ttarget\n")
-            handle.write("chr19\t700\t750\t+\ttarget\n")
-            handle.flush()
-            self.assertTrue(_interval_file_overlaps_targets(handle.name, targets))
-
-    def test_discover_remote_vcf_shards_uses_interval_lists(self) -> None:
-        target_df = pd.DataFrame(
-            [
-                {"contig": "chr1", "position": 105},
-                {"contig": "chr19", "position": 500},
-            ]
-        )
-        fake_listing = "\n".join(
-            [
-                "gs://bucket/exome/vcf/0000000000.interval_list",
-                "gs://bucket/exome/vcf/0000000001.interval_list",
-            ]
-        )
-        config = mock.Mock()
-        config.workbench.requester_pays_project = None
-        with tempfile.TemporaryDirectory() as temp_root:
-            interval_dir = f"{temp_root}/intervals"
-
-            def fake_run_checked(cmd: list[str]) -> mock.Mock:
-                if "ls" in cmd and cmd[-1] == "gs://bucket/exome/vcf/*.interval_list":
-                    return mock.Mock(stdout=fake_listing)
-                if "cp" in cmd and "gs://bucket/exome/vcf/*.interval_list" in cmd:
-                    import os
-
-                    os.makedirs(interval_dir, exist_ok=True)
-                    with open(f"{interval_dir}/0000000000.interval_list", "w", encoding="utf-8") as handle:
-                        handle.write("@HD\tVN:1.6\tSO:coordinate\n")
-                        handle.write("chr1\t100\t110\t+\ttarget\n")
-                    with open(f"{interval_dir}/0000000001.interval_list", "w", encoding="utf-8") as handle:
-                        handle.write("@HD\tVN:1.6\tSO:coordinate\n")
-                        handle.write("chr2\t100\t110\t+\ttarget\n")
-                    return mock.Mock(stdout="")
-                raise AssertionError(f"Unexpected command: {cmd}")
-
-            with mock.patch("aou_workbench.stage1_prepare._run_checked", side_effect=fake_run_checked):
-                shards = _discover_remote_vcf_shards(
-                    config,
-                    "gs://bucket/exome/vcf",
-                    target_df=target_df,
-                    temp_root=temp_root,
-                )
-        self.assertEqual(shards, ["gs://bucket/exome/vcf/0000000000.vcf.bgz"])
+        self.assertEqual(collapsed.shape[0], 2)
+        first = collapsed.loc[collapsed["person_id"] == "1"].iloc[0]
+        self.assertEqual(first["dosage"], 2.0)
+        self.assertEqual(first["callset"], "legacy_exact,wgs_vds")
+        self.assertEqual(first["variant_id"], "11-5227002-T-A")
 
 
 if __name__ == "__main__":

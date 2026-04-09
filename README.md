@@ -13,8 +13,8 @@ The default Workbench path is now cohort-first and BigQuery-native:
 
 - `build-cohort` and `match-controls` read directly from the attached AoU CDR tables in Researcher Workbench.
 - The checked-in starter config targets the non-`prep_` clinical dataset and the AoU genomics ancestry TSV in the attached controlled bucket.
-- Stage 1 uses the AoU smaller-callset VCF workflow and writes a tiny derived genotype table for the matched cohort only.
-- Larger analyses can still use Hail, but Hail is treated as the path for broader MT/VDS work rather than as a fallback for Stage 1.
+- Stage 1 now uses direct Hail/VDS extraction for the exact a priori variant panel and writes a tiny derived genotype table for the matched cohort only.
+- Hail is therefore part of the default Workbench path for Stage 1 exact variants and for broader MT/VDS analyses.
 
 ## Quickstart
 
@@ -65,7 +65,7 @@ aou-workbench build-cohort
 aou-workbench match-controls
 ```
 
-Prepare and run Stage 1 with the AoU smaller-callset workflow:
+Prepare and run Stage 1 with the direct WGS VDS workflow:
 
 ```bash
 aou-workbench preflight
@@ -76,17 +76,17 @@ aou-workbench run-stage1
 `prepare-stage1` expects:
 
 - `gsutil`
-- `bcftools`
+- `hail`
+- access to the AoU WGS VDS path configured in `configs/workbench.yaml`
 - requester-pays access through your AoU workspace project
 
-You can keep the main AoU environment stable by installing `bcftools` into a small side conda env and pointing the repo at it:
+If a Workbench session already ships Hail, reinstall the repo without dependency upgrades:
 
 ```bash
-mamba create -y -p ~/conda-envs/aou-bcftools -c conda-forge bcftools
-export AOU_WORKBENCH_BCFTOOLS=~/conda-envs/aou-bcftools/bin/bcftools
+python -m pip install --user --no-deps --force-reinstall -e .
 ```
 
-If `bcftools` is unavailable, preflight will warn and Stage 1 will fail fast with a clear setup message instead of falling back to an unstable Hail extraction path.
+If Hail is unavailable, preflight will warn and Stage 1 will fail fast with a clear setup message instead of falling back to a slower ad hoc extraction path.
 
 Run the full pipeline after configuring stage-specific derived tables:
 
@@ -114,9 +114,8 @@ aou-workbench report
 
 - Assume execution happens inside All of Us Researcher Workbench.
 - Default cohort inputs come from `person`, `observation_period`, `condition_occurrence`, `measurement`, and `person_ext` in the attached CDR.
-- Use smaller All of Us callsets whenever possible.
-- Prefer VCF/PLINK-style exact extraction for tiny targeted analyses like Stage 1.
-- Reserve Hail MT/VDS workflows for broader rare-variant and genome-scale analyses where Hail's distributed model is worth the added environment complexity.
+- Use direct WGS VDS extraction for tiny exact-site panels when it avoids broader callset scanning.
+- Reserve broader Hail MT/VDS workflows for rare-variant and genome-scale analyses where Hail's distributed model is worth the added environment complexity.
 - Keep row-level outputs in controlled-tier storage only; do not commit them.
 - Treat `main` as the branch Workbench pulls for execution.
 - Keep notebooks thin and delegate business logic to the package. Avoid leaving tracked notebooks open while pulling repo updates because Jupyter can autosave metadata changes.

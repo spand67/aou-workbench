@@ -9,26 +9,19 @@ Use this repository as the Git source of truth and keep your All of Us Researche
 3. Set `configs/workbench.yaml` to the attached non-`prep_` CDR if your workspace differs from the checked-in default.
 4. Run `aou-workbench preflight` before any stage execution.
 5. Start with `aou-workbench build-cohort` and `aou-workbench match-controls`.
-6. For Stage 1, use the AoU smaller-callset VCF path and make sure the app environment has `gsutil` and `bcftools`.
-7. Treat Hail as the environment for larger MT/VDS analyses, not as the default Stage 1 extraction path.
+6. For Stage 1, use the direct AoU WGS VDS path and make sure the app environment has `gsutil` and `hail`.
+7. Treat the direct Hail/VDS extract as the default path for the exact a priori panel, then reuse the tiny derived TSV for the stats step.
 8. Enable Stage 1-4 in `configs/rhabdo/analysis.yaml` only after their derived variant or genotype tables are configured.
 9. Commit reusable code, configs, docs, and notebooks here. Do not commit row-level outputs.
 
 ## Recommended genomics setup
 
 - Stage 1:
-  use smaller-callset VCF extraction with `bcftools`, then run the stats locally on the tiny derived TSV.
+  use direct WGS VDS extraction with Hail for the exact a priori panel, then run the stats locally on the tiny derived TSV.
 - Larger analyses:
   use a Hail-capable AoU Spark environment for MT/VDS workflows.
 
-If installing into the shared base environment is slow or unstable, prefer a tiny side conda env for `bcftools`:
-
-```bash
-mamba create -y -p ~/conda-envs/aou-bcftools -c conda-forge bcftools
-export AOU_WORKBENCH_BCFTOOLS=~/conda-envs/aou-bcftools/bin/bcftools
-```
-
-This mirrors AoU guidance to prefer reduced datasets when possible while still keeping Hail available for broader analyses.
+This keeps the fastest exact-site workflow inside one Hail session while still using the same environment for broader analyses later.
 
 ## If a session breaks after installing Hail
 
