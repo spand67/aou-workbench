@@ -39,9 +39,9 @@ def load_table_if_exists(path: str) -> pd.DataFrame:
     target = Path(path)
     if not target.exists():
         return pd.DataFrame()
-    if path.endswith(".tsv"):
+    if path.endswith(".tsv") or path.endswith(".tsv.gz") or path.endswith(".bgz"):
         return pd.read_csv(path, sep="\t")
-    if path.endswith(".csv"):
+    if path.endswith(".csv") or path.endswith(".csv.gz"):
         return pd.read_csv(path)
     return pd.DataFrame()
 

@@ -266,7 +266,7 @@ def _bigquery_check(cdr: str | None) -> PreflightCheck:
         )
 
 
-def _hail_check(config: ProjectConfig) -> PreflightCheck:
+def _hail_check() -> PreflightCheck:
     try:
         import hail  # type: ignore
     except ImportError as exc:
@@ -282,6 +282,29 @@ def _hail_check(config: ProjectConfig) -> PreflightCheck:
         status="PASS",
         message="Hail is importable for direct WGS VDS extraction and broader MT/VDS analyses.",
         detail=f"Version: {version}",
+    )
+
+
+def _planned_output_check(path: str, name: str) -> PreflightCheck:
+    if path.startswith("gs://"):
+        return PreflightCheck(
+            name=name,
+            status="PASS",
+            message=f"Will write output to `{path}`.",
+        )
+    parent = os.path.dirname(path) or "."
+    if os.path.exists(parent):
+        return PreflightCheck(
+            name=name,
+            status="PASS",
+            message=f"Will write local output to `{path}`.",
+            detail=f"Parent directory exists: {parent}",
+        )
+    return PreflightCheck(
+        name=name,
+        status="PASS",
+        message=f"Will write local output to `{path}`.",
+        detail=f"Parent directory will be created on write: {parent}",
     )
 
 
@@ -366,7 +389,7 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
                 "input:concept",
             )
         )
-    if effective.analysis.run_stage1 and effective.analysis.stage1:
+    if effective.analysis.stage1:
         checks.append(
             _check_local_or_gcs_path(
                 effective.workbench.wgs_vds_path,
@@ -374,7 +397,7 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
                 effective.workbench.requester_pays_project,
             )
         )
-        checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage1.variant_table, "input:stage1"))
+        checks.append(_planned_output_check(effective.analysis.stage1.variant_table, "output:stage1"))
     if effective.analysis.run_stage2 and effective.analysis.stage2:
         checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage2.variant_table, "input:stage2"))
     if effective.analysis.run_stage3 and effective.analysis.stage3:
@@ -383,7 +406,7 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
         checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage4.genotype_table, "input:stage4"))
     checks.append(_bigquery_check(effective.workbench.workspace_cdr))
     checks.append(_tool_check("gsutil", name="tool:gsutil", required_for="Workbench bucket and genomics bucket access"))
-    checks.append(_hail_check(effective))
+    checks.append(_hail_check())
     for warning in runtime.warnings:
         checks.append(
             PreflightCheck(
