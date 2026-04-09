@@ -21,6 +21,13 @@ Use this repository as the Git source of truth and keep your All of Us Researche
 - Larger analyses:
   use a Hail-capable AoU Spark environment for MT/VDS workflows.
 
+If installing into the shared base environment is slow or unstable, prefer a tiny side conda env for `bcftools`:
+
+```bash
+mamba create -y -p ~/conda-envs/aou-bcftools -c conda-forge bcftools
+export AOU_WORKBENCH_BCFTOOLS=~/conda-envs/aou-bcftools/bin/bcftools
+```
+
 This mirrors AoU guidance to prefer reduced datasets when possible while still keeping Hail available for broader analyses.
 
 ## If a session breaks after installing Hail

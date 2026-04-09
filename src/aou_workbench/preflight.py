@@ -285,8 +285,10 @@ def _hail_check(config: ProjectConfig) -> PreflightCheck:
     )
 
 
-def _tool_check(command: str, *, name: str, required_for: str) -> PreflightCheck:
-    path = shutil.which(command)
+def _tool_check(command: str, *, name: str, required_for: str, override_env: str | None = None) -> PreflightCheck:
+    path = os.getenv(override_env) if override_env else None
+    if not path:
+        path = shutil.which(command)
     if path:
         return PreflightCheck(
             name=name,
@@ -374,7 +376,14 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
         checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage4.genotype_table, "input:stage4"))
     checks.append(_bigquery_check(effective.workbench.workspace_cdr))
     checks.append(_tool_check("gsutil", name="tool:gsutil", required_for="Workbench bucket and genomics bucket access"))
-    checks.append(_tool_check("bcftools", name="tool:bcftools", required_for="Stage 1 smaller-callset VCF extraction"))
+    checks.append(
+        _tool_check(
+            "bcftools",
+            name="tool:bcftools",
+            required_for="Stage 1 smaller-callset VCF extraction",
+            override_env="AOU_WORKBENCH_BCFTOOLS",
+        )
+    )
     checks.append(_hail_check(effective))
     for warning in runtime.warnings:
         checks.append(

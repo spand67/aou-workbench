@@ -79,6 +79,13 @@ aou-workbench run-stage1
 - `bcftools`
 - requester-pays access through your AoU workspace project
 
+You can keep the main AoU environment stable by installing `bcftools` into a small side conda env and pointing the repo at it:
+
+```bash
+mamba create -y -p ~/conda-envs/aou-bcftools -c conda-forge bcftools
+export AOU_WORKBENCH_BCFTOOLS=~/conda-envs/aou-bcftools/bin/bcftools
+```
+
 If `bcftools` is unavailable, preflight will warn and Stage 1 will fail fast with a clear setup message instead of falling back to an unstable Hail extraction path.
 
 Run the full pipeline after configuring stage-specific derived tables:

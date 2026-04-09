@@ -75,6 +75,13 @@ def _run_checked(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return result
 
 
+def _bcftools_binary() -> str | None:
+    override = os.getenv("AOU_WORKBENCH_BCFTOOLS")
+    if override:
+        return override
+    return shutil.which("bcftools")
+
+
 def _requester_pays_project(config: ProjectConfig) -> str | None:
     return (
         config.workbench.requester_pays_project
@@ -141,8 +148,12 @@ def _extract_from_vcf_callset(
 ) -> pd.DataFrame:
     if target_df.empty or not sample_ids:
         return pd.DataFrame()
-    if shutil.which("bcftools") is None:
-        raise RuntimeError("bcftools is required for Stage 1 smaller-callset extraction.")
+    bcftools = _bcftools_binary()
+    if bcftools is None:
+        raise RuntimeError(
+            "bcftools is required for Stage 1 smaller-callset extraction. "
+            "Set AOU_WORKBENCH_BCFTOOLS to a dedicated bcftools binary if it is installed outside PATH."
+        )
     if shutil.which("gsutil") is None:
         raise RuntimeError("gsutil is required for Stage 1 smaller-callset extraction.")
 
@@ -179,7 +190,7 @@ def _extract_from_vcf_callset(
             split_vcf = os.path.join(temp_root, f"{os.path.basename(remote_vcf)}.split.vcf.gz")
             _run_checked(
                 [
-                    "bcftools",
+                    bcftools,
                     "view",
                     "-S",
                     sample_path,
@@ -193,7 +204,7 @@ def _extract_from_vcf_callset(
             )
             _run_checked(
                 [
-                    "bcftools",
+                    bcftools,
                     "norm",
                     "-m",
                     "-any",
@@ -205,7 +216,7 @@ def _extract_from_vcf_callset(
             )
             query = _run_checked(
                 [
-                    "bcftools",
+                    bcftools,
                     "query",
                     "-f",
                     "[%CHROM\t%POS\t%REF\t%ALT\t%SAMPLE\t%GT\n]",
@@ -379,6 +390,7 @@ def prepare_stage1_variant_table(
 __all__ = [
     "prepare_stage1_variant_table",
     "_callset_root",
+    "_bcftools_binary",
     "_collapse_stage1_rows",
     "_gt_to_dosage",
     "_normalize_contig",
