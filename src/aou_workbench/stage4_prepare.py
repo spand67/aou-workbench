@@ -26,7 +26,7 @@ def stage4_hail_result_path(paths: ProjectPaths, chromosome: str) -> str:
 def _normalized_chromosome_values(chromosome: str) -> set[str]:
     chrom = chromosome.strip()
     bare = chrom.replace("chr", "")
-    return {bare, f"chr{bare}"}
+    return {f"chr{bare}"}
 
 
 def _matched_sample_frame(matched_df: pd.DataFrame, config: ProjectConfig) -> pd.DataFrame:
