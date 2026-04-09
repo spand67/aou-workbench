@@ -13,6 +13,15 @@ HAIL_KRYO_REGISTRATOR = "is.hail.kryo.HailKryoRegistrator"
 
 
 def require_hail() -> Any:
+    # Hail 0.2.137 still references deprecated NumPy aliases like np.bool.
+    # Workbench images commonly carry NumPy >=1.24 where those aliases were removed.
+    try:
+        import numpy as np  # type: ignore
+
+        if not hasattr(np, "bool"):
+            np.bool = np.bool_  # type: ignore[attr-defined]
+    except Exception:
+        pass
     try:
         import hail as hl  # type: ignore
     except ImportError as exc:  # pragma: no cover - environment dependent
