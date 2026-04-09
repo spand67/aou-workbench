@@ -43,6 +43,11 @@ def _matched_sample_frame(matched_df: pd.DataFrame, config: ProjectConfig) -> pd
     return sample
 
 
+def _matched_sample_hail_table(hl, sample_df: pd.DataFrame):
+    sample_ht = hl.Table.from_pandas(sample_df.rename(columns={"person_id": "s"}))
+    return sample_ht.key_by("s")
+
+
 def prepare_stage4_acaf_subset(
     config: ProjectConfig,
     matched_df: pd.DataFrame,
@@ -56,7 +61,6 @@ def prepare_stage4_acaf_subset(
         return {}
 
     sample_df = _matched_sample_frame(matched_df, config)
-    sample_ids = sample_df["person_id"].tolist()
     chromosome_values = _normalized_chromosome_values(chromosome)
     genotype_path = stage.genotype_table
     annotation_path = stage.annotation_table or join_path(paths.run_root, "stage4", "gwas_annotations.tsv")
@@ -76,15 +80,12 @@ def prepare_stage4_acaf_subset(
     print(f"Reading ACAF MT from {acaf_mt_path}", flush=True)
     mt = hl.read_matrix_table(acaf_mt_path)
 
-    sample_set = hl.literal(set(sample_ids))
-    chrom_set = hl.literal(chromosome_values)
-    mt = mt.filter_cols(sample_set.contains(mt.s))
-    mt = mt.filter_rows(chrom_set.contains(mt.locus.contig))
-    print(f"Filtering ACAF MT to matched samples and {chromosome}.", flush=True)
-
-    sample_ht = hl.Table.from_pandas(sample_df).key_by("person_id")
+    sample_ht = _matched_sample_hail_table(hl, sample_df)
+    interval = hl.parse_locus_interval(next(iter(chromosome_values)), reference_genome="GRCh38")
+    mt = hl.filter_intervals(mt, [interval])
+    mt = mt.semi_join_cols(sample_ht)
+    print(f"Filtering ACAF MT to matched samples and {chromosome} with interval pruning.", flush=True)
     mt = mt.annotate_cols(sample=sample_ht[mt.s])
-    mt = mt.filter_cols(hl.is_defined(mt.sample))
     mt = mt.annotate_rows(
         variant_id=(
             hl.str(mt.locus.contig).replace("chr", "")
