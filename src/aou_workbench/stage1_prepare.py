@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import shutil
+import tempfile
 
 import pandas as pd
 
@@ -86,10 +89,11 @@ def _extract_from_callset(
     mt = mt.filter_rows(hl.is_defined(target_ht[mt.locus, mt.alleles]))
     mt = mt.annotate_rows(target=target_ht[mt.locus, mt.alleles])
     mt = mt.filter_rows(hl.is_defined(mt.target))
+    mt = mt.key_cols_by()
 
     entries = mt.entries()
     entries = entries.filter(hl.is_defined(entries.GT) & (entries.GT.n_alt_alleles() > 0))
-    frame = entries.select(
+    entries = entries.select(
         person_id=hl.str(entries.s),
         variant_id=entries.target.variant_id,
         gene=entries.target.gene,
@@ -100,7 +104,14 @@ def _extract_from_callset(
         exact_test_model=entries.target.exact_test_model,
         dosage=hl.float64(entries.GT.n_alt_alleles()),
         callset=hl.str(callset_name),
-    ).to_pandas()
+    )
+    temp_root = tempfile.mkdtemp(prefix=f"stage1-{callset_name}-")
+    export_path = os.path.join(temp_root, "entries.tsv.bgz")
+    try:
+        entries.export(export_path)
+        frame = pd.read_csv(export_path, sep="\t")
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
     if frame.empty:
         return frame
     frame["person_id"] = frame["person_id"].astype(str)
@@ -166,19 +177,19 @@ def prepare_stage1_variant_table(
         print(f"No target variants configured; wrote empty Stage 1 table to {output_path}", flush=True)
         return empty
 
-    hl = ensure_hail(
-        HAIL_REFERENCE,
-        requester_pays_project=config.workbench.requester_pays_project,
-        requester_pays_buckets=config.workbench.requester_pays_buckets,
-    )
-
     frames: list[pd.DataFrame] = []
     attempted: dict[str, str] = {}
     failures: dict[str, str] = {}
     for callset_name, mt_path in _callset_paths(config).items():
         attempted[callset_name] = mt_path
         print(f"Reading {callset_name} callset from {mt_path}", flush=True)
+        hl = None
         try:
+            hl = ensure_hail(
+                HAIL_REFERENCE,
+                requester_pays_project=config.workbench.requester_pays_project,
+                requester_pays_buckets=config.workbench.requester_pays_buckets,
+            )
             frame = _extract_from_callset(
                 hl,
                 callset_name=callset_name,
@@ -190,6 +201,12 @@ def prepare_stage1_variant_table(
             failures[callset_name] = f"{type(exc).__name__}: {exc}"
             print(f"{callset_name} failed: {type(exc).__name__}: {exc}", flush=True)
             continue
+        finally:
+            try:
+                if hl is not None:
+                    hl.stop()
+            except Exception:
+                pass
         if not frame.empty:
             frames.append(frame)
             print(f"{callset_name} yielded {len(frame)} non-reference genotype rows.", flush=True)
