@@ -11,6 +11,7 @@ from aou_workbench.stage1_prepare import (
     _matched_person_ids,
     _panel_targets_frame,
     _target_interval_strings,
+    stage1_sample_manifest_path,
 )
 from tests.support import build_demo_project_tree
 
@@ -62,6 +63,12 @@ class Stage1PrepareTests(unittest.TestCase):
                 "chr1:201060810-201060820",
                 "chr1:53202422-53202432",
             ],
+        )
+
+    def test_stage1_sample_manifest_path_inserts_samples_suffix(self) -> None:
+        self.assertEqual(
+            stage1_sample_manifest_path("/tmp/rhabdo_stage1_candidate_variants.tsv"),
+            "/tmp/rhabdo_stage1_candidate_variants.samples.tsv",
         )
 
     def test_collapse_stage1_rows_keeps_max_dosage_and_merges_callsets(self) -> None:

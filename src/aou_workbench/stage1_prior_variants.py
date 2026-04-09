@@ -11,6 +11,7 @@ from .config import ProjectConfig
 from .io_utils import read_table, write_dataframe, write_json
 from .paths import ProjectPaths
 from .reporting import write_stage_report
+from .stage1_prepare import stage1_sample_manifest_path
 from .statistics import bh_fdr, run_binary_logistic_regression, summarize_binary_exposure
 
 
@@ -52,6 +53,23 @@ def _stage1_comparisons(sample_df: pd.DataFrame, config: ProjectConfig) -> list[
     ]
 
 
+def _restrict_to_stage1_wgs_samples(sample_df: pd.DataFrame, config: ProjectConfig) -> pd.DataFrame:
+    stage = config.analysis.stage1
+    if stage is None:
+        return sample_df
+    manifest_path = stage1_sample_manifest_path(stage.variant_table)
+    try:
+        present = read_table(manifest_path)
+    except Exception:
+        return sample_df
+    if "person_id" not in present.columns or present.empty:
+        return sample_df.iloc[0:0].copy() if "person_id" in present.columns else sample_df
+    present_ids = set(present["person_id"].astype(str))
+    subset = sample_df.copy()
+    subset["person_id"] = subset["person_id"].astype(str)
+    return subset[subset["person_id"].isin(present_ids)].copy()
+
+
 def run_stage1_prior_variants(
     config: ProjectConfig,
     sample_df: pd.DataFrame,
@@ -60,6 +78,7 @@ def run_stage1_prior_variants(
     stage = config.analysis.stage1
     if stage is None:
         return pd.DataFrame()
+    sample_df = _restrict_to_stage1_wgs_samples(sample_df, config)
     raw = read_table(stage.variant_table).copy()
     raw["person_id"] = raw[stage.person_id_column].astype(str)
     raw["variant_id"] = raw[stage.variant_id_column].astype(str)
@@ -172,4 +191,9 @@ def run_stage1_prior_variants(
     return result
 
 
-__all__ = ["run_stage1_prior_variants", "_stage1_comparisons", "_variant_exposure"]
+__all__ = [
+    "run_stage1_prior_variants",
+    "_restrict_to_stage1_wgs_samples",
+    "_stage1_comparisons",
+    "_variant_exposure",
+]

@@ -7,7 +7,13 @@ import pandas as pd
 from aou_workbench.cohort import build_rhabdo_cohort
 from aou_workbench.config import load_project_config
 from aou_workbench.paths import build_output_paths
-from aou_workbench.stage1_prior_variants import _stage1_comparisons, _variant_exposure, run_stage1_prior_variants
+from aou_workbench.stage1_prepare import stage1_sample_manifest_path
+from aou_workbench.stage1_prior_variants import (
+    _restrict_to_stage1_wgs_samples,
+    _stage1_comparisons,
+    _variant_exposure,
+    run_stage1_prior_variants,
+)
 from tests.support import build_demo_project_tree
 
 
@@ -55,6 +61,25 @@ class Stage1PriorVariantTests(unittest.TestCase):
         self.assertEqual(int(hbb.loc["omop_rhabdo_vs_non_rhabdo", "control_carriers"]), 1)
         self.assertEqual(int(hbb.loc["omop_rhabdo_plus_ck_vs_non_rhabdo", "case_carriers"]), 1)
         self.assertEqual(int(hbb.loc["omop_rhabdo_plus_ck_vs_non_rhabdo", "control_carriers"]), 1)
+
+    def test_stage1_prior_variants_restricts_denominators_to_wgs_manifest(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        cohort_df = build_rhabdo_cohort(config)
+        manifest_path = stage1_sample_manifest_path(config.analysis.stage1.variant_table)
+        pd.DataFrame({"person_id": ["1", "2", "3", "4", "5", "9"]}).to_csv(manifest_path, sep="\t", index=False)
+
+        restricted = _restrict_to_stage1_wgs_samples(cohort_df, config)
+
+        self.assertEqual(set(restricted["person_id"].astype(str)), {"1", "2", "3", "4", "5", "9"})
+        self.assertEqual(int((restricted["rhabdo_case"] == 1).sum()), 4)
+        self.assertEqual(int((restricted["rhabdo_case"] == 0).sum()), 2)
 
     def test_variant_exposure_uses_homozygous_alt_model_when_requested(self) -> None:
         subset = pd.DataFrame(

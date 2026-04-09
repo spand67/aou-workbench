@@ -12,6 +12,13 @@ from .io_utils import ensure_parent_dir, write_dataframe, write_json
 from .preflight import apply_runtime_defaults
 
 
+def stage1_sample_manifest_path(variant_table_path: str) -> str:
+    path = Path(variant_table_path)
+    if path.suffix:
+        return str(path.with_suffix(f".samples{path.suffix}"))
+    return f"{variant_table_path}.samples.tsv"
+
+
 def _panel_targets_frame(targets: tuple[TargetVariant, ...]) -> pd.DataFrame:
     rows = [
         {
@@ -111,9 +118,9 @@ def _extract_from_vds(
     config: ProjectConfig,
     target_df: pd.DataFrame,
     sample_ids: list[str],
-) -> tuple[pd.DataFrame, dict[str, int]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
     if target_df.empty or not sample_ids:
-        return pd.DataFrame(), {"rows": 0, "cols": 0, "entries": 0}
+        return pd.DataFrame(), pd.DataFrame(columns=["person_id"]), {"rows": 0, "cols": 0, "entries": 0}
 
     hl = ensure_hail(
         requester_pays_project=config.workbench.requester_pays_project,
@@ -136,6 +143,7 @@ def _extract_from_vds(
     row_count = mt.count_rows()
     col_count = mt.count_cols()
     print(f"Stage 1 VDS slice contains {row_count} exact variant rows across {col_count} selected samples.", flush=True)
+    present_samples = pd.DataFrame({"person_id": [str(row.s) for row in mt.cols().select("s").collect()]})
 
     mt = mt.filter_entries(hl.is_defined(mt.GT) & mt.GT.is_non_ref())
     entries = mt.entries()
@@ -155,7 +163,7 @@ def _extract_from_vds(
 
     rows = entries.collect()
     if not rows:
-        return pd.DataFrame(), {"rows": row_count, "cols": col_count, "entries": 0}
+        return pd.DataFrame(), present_samples, {"rows": row_count, "cols": col_count, "entries": 0}
 
     frame = pd.DataFrame(
         [
@@ -174,7 +182,7 @@ def _extract_from_vds(
             for row in rows
         ]
     )
-    return frame, {"rows": row_count, "cols": col_count, "entries": len(frame)}
+    return frame, present_samples, {"rows": row_count, "cols": col_count, "entries": len(frame)}
 
 
 def prepare_stage1_variant_table(
@@ -189,7 +197,9 @@ def prepare_stage1_variant_table(
     target_df = _panel_targets_frame(config.panel.a_priori_variants)
     sample_ids = _analysis_person_ids(sample_df)
     output_path = stage.variant_table
+    sample_manifest_path = stage1_sample_manifest_path(output_path)
     ensure_parent_dir(output_path)
+    ensure_parent_dir(sample_manifest_path)
     print(
         f"Preparing Stage 1 extraction for {len(sample_ids)} analysis participants and {len(target_df)} target variants.",
         flush=True,
@@ -198,12 +208,14 @@ def prepare_stage1_variant_table(
     if target_df.empty:
         empty = _collapse_stage1_rows(pd.DataFrame())
         write_dataframe(empty, output_path)
+        write_dataframe(pd.DataFrame(columns=["person_id"]), sample_manifest_path)
         print(f"No target variants configured; wrote empty Stage 1 table to {output_path}", flush=True)
         return empty
 
-    raw, stats = _extract_from_vds(config=config, target_df=target_df, sample_ids=sample_ids)
+    raw, present_samples, stats = _extract_from_vds(config=config, target_df=target_df, sample_ids=sample_ids)
     combined = _collapse_stage1_rows(raw)
     write_dataframe(combined, output_path)
+    write_dataframe(present_samples, sample_manifest_path)
 
     metadata_path = str(Path(output_path).with_suffix(Path(output_path).suffix + ".meta.json"))
     write_json(
@@ -211,6 +223,7 @@ def prepare_stage1_variant_table(
             "requested_variants": int(target_df["variant_id"].nunique()),
             "analysis_people_requested": int(len(sample_ids)),
             "analysis_people_in_vds_slice": int(stats["cols"]),
+            "analysis_people_manifest": sample_manifest_path,
             "exact_variant_rows_in_vds_slice": int(stats["rows"]),
             "non_reference_entries": int(stats["entries"]),
             "variants_with_hits": int(combined["variant_id"].nunique()) if not combined.empty else 0,
@@ -229,5 +242,6 @@ __all__ = [
     "_analysis_person_ids",
     "_matched_person_ids",
     "_panel_targets_frame",
+    "stage1_sample_manifest_path",
     "_target_interval_strings",
 ]
