@@ -100,20 +100,20 @@ def _gsutil_base_cmd(config: ProjectConfig) -> list[str]:
 
 
 def _discover_remote_vcf_shards(config: ProjectConfig, root: str, contigs: list[str]) -> list[str]:
-    listing = _run_checked([*_gsutil_base_cmd(config), "ls", f"{root}/*"]).stdout.splitlines()
+    listing = _run_checked([*_gsutil_base_cmd(config), "ls", f"{root}/**"]).stdout.splitlines()
     wanted: list[str] = []
     for line in listing:
         candidate = line.strip()
-        if not candidate.endswith(".vcf.bgz"):
+        lowered = candidate.lower()
+        if not (lowered.endswith(".vcf.bgz") or lowered.endswith(".vcf.gz")):
             continue
-        name = os.path.basename(candidate)
         for contig in contigs:
             token = contig.lower()
             chrom = token[3:] if token.startswith("chr") else token
-            if f"chr{chrom}" in name.lower():
+            if f"chr{chrom}" in lowered:
                 wanted.append(candidate)
                 break
-            if re.search(rf"(^|[^0-9]){re.escape(chrom)}([^0-9]|$)", name.lower()):
+            if re.search(rf"(^|[^0-9]){re.escape(chrom)}([^0-9]|$)", lowered):
                 wanted.append(candidate)
                 break
     return sorted(set(wanted))
@@ -360,13 +360,17 @@ def prepare_stage1_variant_table(
         else:
             print(f"{callset_name} yielded 0 non-reference genotype rows.", flush=True)
 
-    if failures:
-        details = "\n".join(f"- {name}: {message}" for name, message in failures.items())
-        raise RuntimeError(
-            "Stage 1 extraction requires the AoU smaller-callset VCF workflow and a tool-ready environment.\n"
-            "Install or use an environment with `bcftools` and `gsutil`, then retry.\n"
-            f"{details}"
-        )
+        if failures and not frames:
+            details = "\n".join(f"- {name}: {message}" for name, message in failures.items())
+            raise RuntimeError(
+                "Stage 1 extraction requires the AoU smaller-callset VCF workflow and a tool-ready environment.\n"
+                "Install or use an environment with `bcftools` and `gsutil`, then retry.\n"
+                f"{details}"
+            )
+        if failures:
+            print("Proceeding with partial Stage 1 extraction after callset failures:", flush=True)
+            for name, message in failures.items():
+                print(f"- {name}: {message}", flush=True)
 
     combined = _collapse_stage1_rows(pd.concat(frames, ignore_index=True) if frames else pd.DataFrame())
     write_dataframe(combined, output_path)

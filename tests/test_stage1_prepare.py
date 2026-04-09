@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 import pandas as pd
 
@@ -8,6 +9,7 @@ from aou_workbench.config import load_project_config
 from aou_workbench.stage1_prepare import (
     _callset_root,
     _collapse_stage1_rows,
+    _discover_remote_vcf_shards,
     _gt_to_dosage,
     _normalize_contig,
     _panel_targets_frame,
@@ -90,6 +92,26 @@ class Stage1PrepareTests(unittest.TestCase):
         self.assertEqual(_gt_to_dosage("./."), 0.0)
         self.assertEqual(_normalize_contig("1"), "chr1")
         self.assertEqual(_normalize_contig("chr19"), "chr19")
+
+    def test_discover_remote_vcf_shards_supports_nested_paths(self) -> None:
+        fake_listing = "\n".join(
+            [
+                "gs://bucket/exome/vcf/chr1/part-000.vcf.bgz",
+                "gs://bucket/exome/vcf/chr1/part-000.vcf.bgz.tbi",
+                "gs://bucket/exome/vcf/chr11/shard_01.vcf.gz",
+                "gs://bucket/exome/vcf/chr20/part-000.vcf.bgz",
+            ]
+        )
+        with mock.patch("aou_workbench.stage1_prepare._run_checked") as run_checked:
+            run_checked.return_value = mock.Mock(stdout=fake_listing)
+            shards = _discover_remote_vcf_shards(mock.Mock(), "gs://bucket/exome/vcf", ["chr1", "chr11"])
+        self.assertEqual(
+            shards,
+            [
+                "gs://bucket/exome/vcf/chr1/part-000.vcf.bgz",
+                "gs://bucket/exome/vcf/chr11/shard_01.vcf.gz",
+            ],
+        )
 
 
 if __name__ == "__main__":
