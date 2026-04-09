@@ -29,7 +29,7 @@ def _variant_exposure(
 def _stage1_comparisons(sample_df: pd.DataFrame, config: ProjectConfig) -> list[dict[str, Any]]:
     if {"rhabdo_case", "rhabdo_primary_case"}.issubset(sample_df.columns):
         all_non_rhabdo = sample_df["rhabdo_case"].fillna(0).astype(int) == 0
-        return [
+        comparisons = [
             {
                 "comparison": "omop_rhabdo_vs_non_rhabdo",
                 "comparison_label": "OMOP rhabdo vs non-rhabdo",
@@ -43,6 +43,27 @@ def _stage1_comparisons(sample_df: pd.DataFrame, config: ProjectConfig) -> list[
                 "sample_df": sample_df[(sample_df["rhabdo_primary_case"].fillna(0).astype(int) == 1) | all_non_rhabdo].copy(),
             },
         ]
+        if "ancestry_pred" in sample_df.columns:
+            ancestry_values = sorted(
+                str(value)
+                for value in sample_df["ancestry_pred"].dropna().astype(str).unique().tolist()
+                if str(value).strip()
+            )
+            for ancestry in ancestry_values:
+                ancestry_df = sample_df[sample_df["ancestry_pred"].astype(str) == ancestry].copy()
+                if ancestry_df.empty:
+                    continue
+                if ancestry_df["rhabdo_case"].fillna(0).astype(int).nunique() < 2:
+                    continue
+                comparisons.append(
+                    {
+                        "comparison": f"omop_rhabdo_vs_non_rhabdo_ancestry_{ancestry.lower()}",
+                        "comparison_label": f"OMOP rhabdo vs non-rhabdo ({ancestry})",
+                        "outcome_column": "rhabdo_case",
+                        "sample_df": ancestry_df,
+                    }
+                )
+        return comparisons
     return [
         {
             "comparison": "matched_case_control",
@@ -60,10 +81,14 @@ def _restrict_to_stage1_wgs_samples(sample_df: pd.DataFrame, config: ProjectConf
     manifest_path = stage1_sample_manifest_path(stage.variant_table)
     try:
         present = read_table(manifest_path)
-    except Exception:
-        return sample_df
+    except Exception as exc:
+        raise RuntimeError(
+            f"Missing Stage 1 WGS sample manifest at {manifest_path}. Rerun `aou-workbench prepare-stage1` before `run-stage1`."
+        ) from exc
     if "person_id" not in present.columns or present.empty:
-        return sample_df.iloc[0:0].copy() if "person_id" in present.columns else sample_df
+        raise RuntimeError(
+            f"Invalid Stage 1 WGS sample manifest at {manifest_path}. Rerun `aou-workbench prepare-stage1` before `run-stage1`."
+        )
     present_ids = set(present["person_id"].astype(str))
     subset = sample_df.copy()
     subset["person_id"] = subset["person_id"].astype(str)

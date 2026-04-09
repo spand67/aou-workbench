@@ -8,6 +8,7 @@ import pandas as pd
 
 from aou_workbench.config import load_project_config
 from aou_workbench.pipeline import run_all
+from aou_workbench.stage1_prepare import stage1_sample_manifest_path
 from tests.support import build_demo_project_tree
 
 
@@ -20,6 +21,12 @@ class PipelineIntegrationTests(unittest.TestCase):
             cohort_path=paths["cohort"],
             panel_path=paths["panel"],
             analysis_path=paths["analysis"],
+        )
+        cohort_df = pd.read_csv(paths["cohort_table"], sep="\t")
+        pd.DataFrame({"person_id": cohort_df["person_id"].astype(str)}).to_csv(
+            stage1_sample_manifest_path(paths["stage1_table"]),
+            sep="\t",
+            index=False,
         )
         with mock.patch("aou_workbench.pipeline.prepare_stage1_variant_table") as mock_prepare:
             mock_prepare.return_value = pd.read_csv(paths["stage1_table"], sep="\t")

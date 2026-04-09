@@ -143,7 +143,10 @@ def _extract_from_vds(
     row_count = mt.count_rows()
     col_count = mt.count_cols()
     print(f"Stage 1 VDS slice contains {row_count} exact variant rows across {col_count} selected samples.", flush=True)
-    present_samples = pd.DataFrame({"person_id": [str(row.s) for row in mt.cols().select("s").collect()]})
+    col_ht = mt.cols()
+    col_ht = col_ht.key_by()
+    col_ht = col_ht.select(person_id=col_ht.s)
+    present_samples = pd.DataFrame({"person_id": [str(row.person_id) for row in col_ht.collect()]})
 
     mt = mt.filter_entries(hl.is_defined(mt.GT) & mt.GT.is_non_ref())
     entries = mt.entries()
