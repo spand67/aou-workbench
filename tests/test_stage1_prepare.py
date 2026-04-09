@@ -6,6 +6,7 @@ import pandas as pd
 
 from aou_workbench.config import load_project_config
 from aou_workbench.stage1_prepare import (
+    _analysis_person_ids,
     _collapse_stage1_rows,
     _matched_person_ids,
     _panel_targets_frame,
@@ -42,9 +43,10 @@ class Stage1PrepareTests(unittest.TestCase):
         )
         self.assertTrue((frame["exact_test_model"] == "carrier_vs_noncarrier").all())
 
-    def test_matched_person_ids_sorts_and_deduplicates(self) -> None:
+    def test_analysis_person_ids_sorts_and_deduplicates(self) -> None:
         matched_df = pd.DataFrame({"person_id": [5, "2", 5, 1, "10"]})
 
+        self.assertEqual(_analysis_person_ids(matched_df), ["1", "10", "2", "5"])
         self.assertEqual(_matched_person_ids(matched_df), ["1", "10", "2", "5"])
 
     def test_target_interval_strings_pad_and_sort_targets(self) -> None:

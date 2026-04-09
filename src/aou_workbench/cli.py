@@ -45,6 +45,15 @@ def _load_or_build_matched_artifacts(config):
     return match_controls_artifacts(config)
 
 
+def _load_or_build_cohort_artifacts(config):
+    effective = apply_runtime_defaults(config)
+    paths = build_output_paths(effective)
+    if os.path.exists(paths.built_cohort_tsv):
+        cohort_df = read_table(paths.built_cohort_tsv)
+        return effective, paths, cohort_df
+    return build_cohort_artifacts(config)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AoU workbench CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -96,8 +105,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "prepare-stage1":
-        effective, _, matched_df = _load_or_build_matched_artifacts(config)
-        frame = prepare_stage1_variant_table(effective, matched_df)
+        effective, _, cohort_df = _load_or_build_cohort_artifacts(config)
+        frame = prepare_stage1_variant_table(effective, cohort_df)
         stage = effective.analysis.stage1
         if stage is None:
             print("Stage 1 is not configured.")
@@ -113,12 +122,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command in {"run-stage1", "run-stage2", "run-stage3", "run-stage4"}:
-        effective, paths, matched_df = _load_or_build_matched_artifacts(config)
         if args.command == "run-stage1":
-            frame = run_stage1_prior_variants(effective, matched_df, paths)
+            effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
+            frame = run_stage1_prior_variants(effective, cohort_df, paths)
             print(f"Stage 1 rows: {frame.shape[0]}")
             print(paths.stage1_results_tsv)
             return 0
+        effective, paths, matched_df = _load_or_build_matched_artifacts(config)
         if args.command == "run-stage2":
             _, gene_df, person_df = run_stage2_plp_panel(effective, matched_df, paths)
             print(f"Stage 2 genes: {gene_df.shape[0]}")

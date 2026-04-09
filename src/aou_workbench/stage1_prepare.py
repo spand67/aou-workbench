@@ -32,11 +32,15 @@ def _panel_targets_frame(targets: tuple[TargetVariant, ...]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _matched_person_ids(matched_df: pd.DataFrame) -> list[str]:
-    if "person_id" not in matched_df.columns:
-        raise ValueError("Matched cohort is missing the required 'person_id' column.")
-    ids = matched_df["person_id"].astype(str).dropna().drop_duplicates().sort_values()
+def _analysis_person_ids(sample_df: pd.DataFrame) -> list[str]:
+    if "person_id" not in sample_df.columns:
+        raise ValueError("Analysis cohort is missing the required 'person_id' column.")
+    ids = sample_df["person_id"].astype(str).dropna().drop_duplicates().sort_values()
     return ids.tolist()
+
+
+def _matched_person_ids(matched_df: pd.DataFrame) -> list[str]:
+    return _analysis_person_ids(matched_df)
 
 
 def _target_interval_strings(target_df: pd.DataFrame, pad_bp: int = 5) -> list[str]:
@@ -131,7 +135,7 @@ def _extract_from_vds(
 
     row_count = mt.count_rows()
     col_count = mt.count_cols()
-    print(f"Stage 1 VDS slice contains {row_count} exact variant rows across {col_count} matched samples.", flush=True)
+    print(f"Stage 1 VDS slice contains {row_count} exact variant rows across {col_count} selected samples.", flush=True)
 
     mt = mt.filter_entries(hl.is_defined(mt.GT) & mt.GT.is_non_ref())
     entries = mt.entries()
@@ -175,7 +179,7 @@ def _extract_from_vds(
 
 def prepare_stage1_variant_table(
     config: ProjectConfig,
-    matched_df: pd.DataFrame,
+    sample_df: pd.DataFrame,
 ) -> pd.DataFrame:
     config = apply_runtime_defaults(config)
     stage = config.analysis.stage1
@@ -183,11 +187,11 @@ def prepare_stage1_variant_table(
         return pd.DataFrame()
 
     target_df = _panel_targets_frame(config.panel.a_priori_variants)
-    sample_ids = _matched_person_ids(matched_df)
+    sample_ids = _analysis_person_ids(sample_df)
     output_path = stage.variant_table
     ensure_parent_dir(output_path)
     print(
-        f"Preparing Stage 1 extraction for {len(sample_ids)} matched participants and {len(target_df)} target variants.",
+        f"Preparing Stage 1 extraction for {len(sample_ids)} analysis participants and {len(target_df)} target variants.",
         flush=True,
     )
 
@@ -205,8 +209,8 @@ def prepare_stage1_variant_table(
     write_json(
         {
             "requested_variants": int(target_df["variant_id"].nunique()),
-            "matched_people_requested": int(len(sample_ids)),
-            "matched_people_in_vds_slice": int(stats["cols"]),
+            "analysis_people_requested": int(len(sample_ids)),
+            "analysis_people_in_vds_slice": int(stats["cols"]),
             "exact_variant_rows_in_vds_slice": int(stats["rows"]),
             "non_reference_entries": int(stats["entries"]),
             "variants_with_hits": int(combined["variant_id"].nunique()) if not combined.empty else 0,
@@ -222,6 +226,7 @@ def prepare_stage1_variant_table(
 __all__ = [
     "prepare_stage1_variant_table",
     "_collapse_stage1_rows",
+    "_analysis_person_ids",
     "_matched_person_ids",
     "_panel_targets_frame",
     "_target_interval_strings",

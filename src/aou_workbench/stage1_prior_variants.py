@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from .config import ProjectConfig
@@ -24,9 +25,36 @@ def _variant_exposure(
     return dosage, 1.0
 
 
+def _stage1_comparisons(sample_df: pd.DataFrame, config: ProjectConfig) -> list[dict[str, Any]]:
+    if {"rhabdo_case", "rhabdo_primary_case"}.issubset(sample_df.columns):
+        all_non_rhabdo = sample_df["rhabdo_case"].fillna(0).astype(int) == 0
+        return [
+            {
+                "comparison": "omop_rhabdo_vs_non_rhabdo",
+                "comparison_label": "OMOP rhabdo vs non-rhabdo",
+                "outcome_column": "rhabdo_case",
+                "sample_df": sample_df[sample_df["rhabdo_case"].fillna(0).astype(int).isin([0, 1])].copy(),
+            },
+            {
+                "comparison": "omop_rhabdo_plus_ck_vs_non_rhabdo",
+                "comparison_label": "OMOP rhabdo + CK>=5000 vs non-rhabdo",
+                "outcome_column": "rhabdo_primary_case",
+                "sample_df": sample_df[(sample_df["rhabdo_primary_case"].fillna(0).astype(int) == 1) | all_non_rhabdo].copy(),
+            },
+        ]
+    return [
+        {
+            "comparison": "matched_case_control",
+            "comparison_label": "Matched case-control",
+            "outcome_column": config.analysis.matched_outcome_column,
+            "sample_df": sample_df.copy(),
+        }
+    ]
+
+
 def run_stage1_prior_variants(
     config: ProjectConfig,
-    matched_df: pd.DataFrame,
+    sample_df: pd.DataFrame,
     paths: ProjectPaths,
 ) -> pd.DataFrame:
     stage = config.analysis.stage1
@@ -63,63 +91,85 @@ def run_stage1_prior_variants(
         requested["exact_test_model"] = "carrier_vs_noncarrier"
 
     rows: list[dict[str, Any]] = []
-    for variant in requested.itertuples(index=False):
-        subset = raw[raw["variant_id"] == variant.variant_id]
-        exposure, carrier_threshold = _variant_exposure(
-            subset,
-            exact_test_model=variant.exact_test_model,
-        )
-        counts = summarize_binary_exposure(
-            matched_df,
-            exposure,
-            outcome_column=config.analysis.matched_outcome_column,
-            carrier_threshold=carrier_threshold,
-        )
-        regression = run_binary_logistic_regression(
-            matched_df,
-            exposure,
-            outcome_column=config.analysis.matched_outcome_column,
-            covariates=stage.covariates,
-        )
-        rows.append(
+    comparison_qc: list[dict[str, Any]] = []
+    for comparison in _stage1_comparisons(sample_df, config):
+        comparison_df = comparison["sample_df"]
+        outcome_column = comparison["outcome_column"]
+        if outcome_column not in comparison_df.columns:
+            continue
+        comparison_qc.append(
             {
-                "variant_id": variant.variant_id,
-                "label": variant.label,
-                "gene": variant.gene,
-                "rsid": variant.rsid,
-                "source": variant.source,
-                "evidence_tier": variant.evidence_tier,
-                "exact_test_model": variant.exact_test_model,
-                **counts,
-                **regression,
+                "comparison": comparison["comparison"],
+                "comparison_label": comparison["comparison_label"],
+                "outcome_column": outcome_column,
+                "n_cases": int((comparison_df[outcome_column] == 1).sum()),
+                "n_controls": int((comparison_df[outcome_column] == 0).sum()),
             }
         )
-    result = pd.DataFrame(rows).sort_values(["fisher_p", "regression_p", "variant_id"]).reset_index(drop=True)
+        for variant in requested.itertuples(index=False):
+            subset = raw[raw["variant_id"] == variant.variant_id]
+            exposure, carrier_threshold = _variant_exposure(
+                subset,
+                exact_test_model=variant.exact_test_model,
+            )
+            counts = summarize_binary_exposure(
+                comparison_df,
+                exposure,
+                outcome_column=outcome_column,
+                carrier_threshold=carrier_threshold,
+            )
+            regression = run_binary_logistic_regression(
+                comparison_df,
+                exposure,
+                outcome_column=outcome_column,
+                covariates=stage.covariates,
+            )
+            rows.append(
+                {
+                    "comparison": comparison["comparison"],
+                    "comparison_label": comparison["comparison_label"],
+                    "outcome_column": outcome_column,
+                    "variant_id": variant.variant_id,
+                    "label": variant.label,
+                    "gene": variant.gene,
+                    "rsid": variant.rsid,
+                    "source": variant.source,
+                    "evidence_tier": variant.evidence_tier,
+                    "exact_test_model": variant.exact_test_model,
+                    **counts,
+                    **regression,
+                }
+            )
+    result = pd.DataFrame(rows).sort_values(["comparison", "fisher_p", "regression_p", "variant_id"]).reset_index(drop=True)
     if not result.empty:
-        result["fdr_q"] = bh_fdr(result["fisher_p"].values)
-        result["regression_fdr_q"] = bh_fdr(result["regression_p"].values)
+        result["fdr_q"] = np.nan
+        result["regression_fdr_q"] = np.nan
+        for comparison_name, comparison_rows in result.groupby("comparison").groups.items():
+            indexer = list(comparison_rows)
+            result.loc[indexer, "fdr_q"] = bh_fdr(result.loc[indexer, "fisher_p"].values)
+            result.loc[indexer, "regression_fdr_q"] = bh_fdr(result.loc[indexer, "regression_p"].values)
     write_dataframe(result, paths.stage1_results_tsv)
     write_json(
         {
             "n_variants_requested": int(len(requested)),
             "n_variants_with_rows": int(raw["variant_id"].nunique()),
-            "n_cases": int((matched_df[config.analysis.matched_outcome_column] == 1).sum()),
-            "n_controls": int((matched_df[config.analysis.matched_outcome_column] == 0).sum()),
+            "comparisons": comparison_qc,
         },
         paths.stage1_qc_json,
     )
+    summary_lines = [f"- Requested variants: {len(requested)}"]
+    for item in comparison_qc:
+        summary_lines.append(
+            f"- {item['comparison_label']}: {item['n_cases']} cases vs {item['n_controls']} non-rhabdo controls"
+        )
     write_stage_report(
         title="Stage 1: A priori candidate variants",
-        summary_lines=[
-            f"- Requested variants: {len(requested)}",
-            f"- Matched cases: {(matched_df[config.analysis.matched_outcome_column] == 1).sum()}",
-            f"- Matched controls: {(matched_df[config.analysis.matched_outcome_column] == 0).sum()}",
-        ],
+        summary_lines=summary_lines,
         preview_df=result,
-        preview_columns=["label", "gene", "case_carriers", "control_carriers", "fisher_p", "regression_p"],
+        preview_columns=["comparison_label", "label", "gene", "case_carriers", "control_carriers", "fisher_p", "regression_p"],
         path=paths.stage1_report_md,
     )
     return result
 
 
-__all__ = ["run_stage1_prior_variants", "_variant_exposure"]
+__all__ = ["run_stage1_prior_variants", "_stage1_comparisons", "_variant_exposure"]

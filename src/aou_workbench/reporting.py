@@ -18,7 +18,10 @@ def dataframe_markdown(df: pd.DataFrame, *, columns: Iterable[str] | None = None
         selected = [column for column in columns if column in view.columns]
         if selected:
             view = view[selected]
-    return view.head(limit).to_markdown(index=False)
+    try:
+        return view.head(limit).to_markdown(index=False)
+    except ImportError:
+        return view.head(limit).to_string(index=False)
 
 
 def write_stage_report(

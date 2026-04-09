@@ -36,6 +36,7 @@ def build_demo_project_tree() -> dict[str, str]:
         {"person_id": 1, "condition_concept_id": 100, "condition_start_date": "2022-01-10"},
         {"person_id": 2, "condition_concept_id": 100, "condition_start_date": "2022-02-12"},
         {"person_id": 3, "condition_concept_id": 100, "condition_start_date": "2022-03-15"},
+        {"person_id": 4, "condition_concept_id": 100, "condition_start_date": "2022-04-01"},
     ]
     measurement_rows = [
         {"person_id": 1, "measurement_concept_id": 900, "value_as_number": 6800, "measurement_date": "2022-01-11"},
@@ -64,6 +65,7 @@ def build_demo_project_tree() -> dict[str, str]:
 
     stage1_rows = [
         {"person_id": 1, "variant_id": "11-5227002-T-A", "gene": "HBB", "dosage": 1},
+        {"person_id": 4, "variant_id": "11-5227002-T-A", "gene": "HBB", "dosage": 1},
         {"person_id": 9, "variant_id": "11-5227002-T-A", "gene": "HBB", "dosage": 1},
         {"person_id": 2, "variant_id": "19-38451842-C-T", "gene": "RYR1", "dosage": 1},
         {"person_id": 3, "variant_id": "19-38499993-G-A", "gene": "RYR1", "dosage": 1},
@@ -165,6 +167,7 @@ def build_demo_project_tree() -> dict[str, str]:
         "clinical_cofactor_columns": ["statin_exposure", "crush_injury", "sepsis", "renal_injury"],
         "definite": {
             "condition_concept_ids": [100],
+            "measurement_terms": ["creatine kinase"],
             "measurement_concept_ids": [900],
             "measurement_min": 5000,
             "require_condition": True,
@@ -172,10 +175,8 @@ def build_demo_project_tree() -> dict[str, str]:
         },
         "probable": {
             "condition_concept_ids": [100],
-            "measurement_concept_ids": [900],
-            "measurement_min": 1500,
-            "require_condition": False,
-            "require_measurement": True,
+            "require_condition": True,
+            "require_measurement": False,
         },
         "min_observation_days": 180,
     }
