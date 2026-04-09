@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
+import re
 import shutil
+import subprocess
 import tempfile
 
 import pandas as pd
@@ -28,6 +31,10 @@ def _callset_root(path: str) -> str:
 
 def _split_mt_path(path: str) -> str:
     return f"{_callset_root(path)}/splitMT/hail.mt"
+
+
+def _vcf_root(path: str) -> str:
+    return f"{_callset_root(path)}/vcf"
 
 
 def _panel_targets_frame(targets: tuple[TargetVariant, ...]) -> pd.DataFrame:
@@ -63,6 +70,212 @@ def _callset_paths(config: ProjectConfig) -> dict[str, str]:
         "exome": _split_mt_path(config.workbench.exome_mt_path),
         "clinvar": _split_mt_path(config.workbench.clinvar_mt_path),
     }
+
+
+def _vcf_callset_paths(config: ProjectConfig) -> dict[str, str]:
+    return {
+        "acaf": _vcf_root(config.workbench.acaf_mt_path),
+        "exome": _vcf_root(config.workbench.exome_mt_path),
+        "clinvar": _vcf_root(config.workbench.clinvar_mt_path),
+    }
+
+
+def _run_checked(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Command failed")
+    return result
+
+
+def _requester_pays_project(config: ProjectConfig) -> str | None:
+    return (
+        config.workbench.requester_pays_project
+        or os.getenv("GCS_REQUESTER_PAYS_PROJECT")
+        or os.getenv("GOOGLE_PROJECT")
+        or os.getenv("GOOGLE_CLOUD_PROJECT")
+    )
+
+
+def _gsutil_base_cmd(config: ProjectConfig) -> list[str]:
+    cmd = ["gsutil"]
+    requester_project = _requester_pays_project(config)
+    if requester_project:
+        cmd.extend(["-u", requester_project])
+    return cmd
+
+
+def _discover_remote_vcf_shards(config: ProjectConfig, root: str, contigs: list[str]) -> list[str]:
+    listing = _run_checked([*_gsutil_base_cmd(config), "ls", f"{root}/*"]).stdout.splitlines()
+    wanted: list[str] = []
+    for line in listing:
+        candidate = line.strip()
+        if not candidate.endswith(".vcf.bgz"):
+            continue
+        name = os.path.basename(candidate)
+        for contig in contigs:
+            token = contig.lower()
+            chrom = token[3:] if token.startswith("chr") else token
+            if f"chr{chrom}" in name.lower():
+                wanted.append(candidate)
+                break
+            if re.search(rf"(^|[^0-9]){re.escape(chrom)}([^0-9]|$)", name.lower()):
+                wanted.append(candidate)
+                break
+    return sorted(set(wanted))
+
+
+def _copy_remote_objects(config: ProjectConfig, sources: list[str], dest_dir: str) -> None:
+    for source in sources:
+        _run_checked([*_gsutil_base_cmd(config), "cp", source, dest_dir])
+
+
+def _gt_to_dosage(gt: str) -> float:
+    if gt in {".", "./.", ".|."}:
+        return 0.0
+    tokens = re.split(r"[\/|]", gt.split(":")[0])
+    if any(token == "." for token in tokens):
+        return 0.0
+    return float(sum(1 for token in tokens if token != "0"))
+
+
+def _normalize_contig(value: str) -> str:
+    text = str(value)
+    return text if text.startswith("chr") else f"chr{text}"
+
+
+def _extract_from_vcf_callset(
+    *,
+    config: ProjectConfig,
+    callset_name: str,
+    vcf_root: str,
+    target_df: pd.DataFrame,
+    sample_ids: list[str],
+) -> pd.DataFrame:
+    if target_df.empty or not sample_ids:
+        return pd.DataFrame()
+    if shutil.which("bcftools") is None:
+        raise RuntimeError("bcftools is required for non-Hail Stage 1 extraction.")
+    if shutil.which("gsutil") is None:
+        raise RuntimeError("gsutil is required for non-Hail Stage 1 extraction.")
+
+    contigs = sorted(target_df["contig"].dropna().astype(str).unique())
+    remote_vcfs = _discover_remote_vcf_shards(config, vcf_root, contigs)
+    if not remote_vcfs:
+        raise RuntimeError(f"No VCF shards found under {vcf_root} for contigs {', '.join(contigs)}")
+
+    temp_root = tempfile.mkdtemp(prefix=f"stage1-vcf-{callset_name}-")
+    try:
+        sample_path = os.path.join(temp_root, "samples.txt")
+        regions_path = os.path.join(temp_root, "targets.tsv")
+        with open(sample_path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(sample_ids) + "\n")
+        regions = target_df.loc[:, ["contig", "position"]].copy()
+        regions["end"] = regions["position"]
+        regions.to_csv(
+            regions_path,
+            sep="\t",
+            index=False,
+            header=False,
+        )
+
+        to_copy: list[str] = []
+        for vcf in remote_vcfs:
+            to_copy.append(vcf)
+            to_copy.append(f"{vcf}.tbi")
+        _copy_remote_objects(config, to_copy, temp_root)
+
+        frames: list[pd.DataFrame] = []
+        for remote_vcf in remote_vcfs:
+            local_vcf = os.path.join(temp_root, os.path.basename(remote_vcf))
+            subset_vcf = os.path.join(temp_root, f"{os.path.basename(remote_vcf)}.subset.vcf.gz")
+            split_vcf = os.path.join(temp_root, f"{os.path.basename(remote_vcf)}.split.vcf.gz")
+            _run_checked(
+                [
+                    "bcftools",
+                    "view",
+                    "-S",
+                    sample_path,
+                    "-R",
+                    regions_path,
+                    "-Oz",
+                    "-o",
+                    subset_vcf,
+                    local_vcf,
+                ]
+            )
+            _run_checked(
+                [
+                    "bcftools",
+                    "norm",
+                    "-m",
+                    "-any",
+                    "-Oz",
+                    "-o",
+                    split_vcf,
+                    subset_vcf,
+                ]
+            )
+            query = _run_checked(
+                [
+                    "bcftools",
+                    "query",
+                    "-f",
+                    "[%CHROM\t%POS\t%REF\t%ALT\t%SAMPLE\t%GT\n]",
+                    split_vcf,
+                ]
+            ).stdout
+            if not query.strip():
+                continue
+            frame = pd.read_csv(
+                io.StringIO(query),
+                sep="\t",
+                names=["contig", "position", "ref", "alt", "person_id", "gt"],
+                dtype={"contig": str, "position": int, "ref": str, "alt": str, "person_id": str, "gt": str},
+            )
+            frame["dosage"] = frame["gt"].map(_gt_to_dosage)
+            frame = frame[frame["dosage"] > 0].copy()
+            if frame.empty:
+                continue
+            frame["contig"] = frame["contig"].map(_normalize_contig)
+            frame["variant_id"] = (
+                frame["contig"].str.replace("chr", "", regex=False)
+                + "-"
+                + frame["position"].astype(str)
+                + "-"
+                + frame["ref"]
+                + "-"
+                + frame["alt"]
+            )
+            annotated = frame.merge(
+                target_df,
+                on=["contig", "position", "ref", "alt", "variant_id"],
+                how="inner",
+                suffixes=("", "_target"),
+            )
+            if annotated.empty:
+                continue
+            annotated["callset"] = callset_name
+            frames.append(
+                annotated[
+                    [
+                        "person_id",
+                        "variant_id",
+                        "gene",
+                        "label",
+                        "rsid",
+                        "source",
+                        "evidence_tier",
+                        "exact_test_model",
+                        "dosage",
+                        "callset",
+                    ]
+                ].copy()
+            )
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
 
 
 def _extract_from_callset(
@@ -180,33 +393,47 @@ def prepare_stage1_variant_table(
     frames: list[pd.DataFrame] = []
     attempted: dict[str, str] = {}
     failures: dict[str, str] = {}
-    for callset_name, mt_path in _callset_paths(config).items():
-        attempted[callset_name] = mt_path
-        print(f"Reading {callset_name} callset from {mt_path}", flush=True)
-        hl = None
+    vcf_paths = _vcf_callset_paths(config)
+    mt_paths = _callset_paths(config)
+    for callset_name, vcf_root in vcf_paths.items():
+        attempted[callset_name] = vcf_root
+        print(f"Reading {callset_name} callset from {vcf_root}", flush=True)
         try:
-            hl = ensure_hail(
-                HAIL_REFERENCE,
-                requester_pays_project=config.workbench.requester_pays_project,
-                requester_pays_buckets=config.workbench.requester_pays_buckets,
-            )
-            frame = _extract_from_callset(
-                hl,
+            frame = _extract_from_vcf_callset(
+                config=config,
                 callset_name=callset_name,
-                mt_path=mt_path,
+                vcf_root=vcf_root,
                 target_df=target_df,
                 sample_ids=sample_ids,
             )
         except Exception as exc:
-            failures[callset_name] = f"{type(exc).__name__}: {exc}"
-            print(f"{callset_name} failed: {type(exc).__name__}: {exc}", flush=True)
-            continue
-        finally:
+            print(f"{callset_name} VCF path failed: {type(exc).__name__}: {exc}", flush=True)
+            hl = None
             try:
-                if hl is not None:
-                    hl.stop()
-            except Exception:
-                pass
+                mt_path = mt_paths[callset_name]
+                print(f"Falling back to Hail for {callset_name} using {mt_path}", flush=True)
+                hl = ensure_hail(
+                    HAIL_REFERENCE,
+                    requester_pays_project=config.workbench.requester_pays_project,
+                    requester_pays_buckets=config.workbench.requester_pays_buckets,
+                )
+                frame = _extract_from_callset(
+                    hl,
+                    callset_name=callset_name,
+                    mt_path=mt_path,
+                    target_df=target_df,
+                    sample_ids=sample_ids,
+                )
+            except Exception as fallback_exc:
+                failures[callset_name] = f"{type(fallback_exc).__name__}: {fallback_exc}"
+                print(f"{callset_name} failed: {type(fallback_exc).__name__}: {fallback_exc}", flush=True)
+                continue
+            finally:
+                try:
+                    if hl is not None:
+                        hl.stop()
+                except Exception:
+                    pass
         if not frame.empty:
             frames.append(frame)
             print(f"{callset_name} yielded {len(frame)} non-reference genotype rows.", flush=True)
@@ -240,6 +467,9 @@ __all__ = [
     "prepare_stage1_variant_table",
     "_callset_root",
     "_collapse_stage1_rows",
+    "_gt_to_dosage",
+    "_normalize_contig",
     "_panel_targets_frame",
     "_split_mt_path",
+    "_vcf_root",
 ]

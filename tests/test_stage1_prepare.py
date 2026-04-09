@@ -5,7 +5,15 @@ import unittest
 import pandas as pd
 
 from aou_workbench.config import load_project_config
-from aou_workbench.stage1_prepare import _callset_root, _collapse_stage1_rows, _panel_targets_frame, _split_mt_path
+from aou_workbench.stage1_prepare import (
+    _callset_root,
+    _collapse_stage1_rows,
+    _gt_to_dosage,
+    _normalize_contig,
+    _panel_targets_frame,
+    _split_mt_path,
+    _vcf_root,
+)
 from tests.support import build_demo_project_tree
 
 
@@ -22,6 +30,10 @@ class Stage1PrepareTests(unittest.TestCase):
         self.assertEqual(
             _callset_root("gs://bucket/v8/wgs/short_read/snpindel/clinvar/splitMT/hail.mt"),
             "gs://bucket/v8/wgs/short_read/snpindel/clinvar",
+        )
+        self.assertEqual(
+            _vcf_root("gs://bucket/v8/wgs/short_read/snpindel/acaf_threshold/hail.mt"),
+            "gs://bucket/v8/wgs/short_read/snpindel/acaf_threshold/vcf",
         )
 
     def test_panel_targets_frame_uses_project_variant_ids(self) -> None:
@@ -70,6 +82,14 @@ class Stage1PrepareTests(unittest.TestCase):
         self.assertEqual(len(collapsed), 1)
         self.assertEqual(collapsed.loc[0, "dosage"], 2.0)
         self.assertEqual(collapsed.loc[0, "callset"], "acaf,clinvar")
+
+    def test_genotype_dosage_and_contig_normalization_helpers(self) -> None:
+        self.assertEqual(_gt_to_dosage("0/0"), 0.0)
+        self.assertEqual(_gt_to_dosage("0/1"), 1.0)
+        self.assertEqual(_gt_to_dosage("1|1"), 2.0)
+        self.assertEqual(_gt_to_dosage("./."), 0.0)
+        self.assertEqual(_normalize_contig("1"), "chr1")
+        self.assertEqual(_normalize_contig("chr19"), "chr19")
 
 
 if __name__ == "__main__":
