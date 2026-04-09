@@ -16,6 +16,7 @@ from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_prepare import prepare_stage2_variant_table
 from .stage2_plp_panel import run_stage2_plp_panel
+from .stage4_prepare import prepare_stage4_acaf_subset
 from .stage3_burden import run_stage3_burden
 from .stage4_gwas import run_stage4_gwas
 
@@ -87,6 +88,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_config_arguments(prepare_regenie_parser)
 
+    prepare_stage4_parser = subparsers.add_parser(
+        "prepare-stage4",
+        help="Subset the ACAF smaller callset with Hail, export local PLINK files, and run a Hail pilot GWAS.",
+    )
+    _add_config_arguments(prepare_stage4_parser)
+    prepare_stage4_parser.add_argument("--chromosome", default="chr19")
+
     for name in ("run-stage1", "run-stage2", "run-stage3", "run-stage4", "run-all"):
         stage_parser = subparsers.add_parser(name, help=f"Execute {name}.")
         _add_config_arguments(stage_parser)
@@ -144,6 +152,16 @@ def main(argv: list[str] | None = None) -> int:
         effective, paths, matched_df = _load_or_build_matched_artifacts(config)
         outputs = prepare_regenie_inputs(effective, matched_df, paths)
         print(f"Prepared REGENIE inputs for {matched_df['person_id'].astype(str).nunique()} matched samples.")
+        for name, path in outputs.items():
+            print(f"{name}: {path}")
+        return 0
+
+    if args.command == "prepare-stage4":
+        effective, paths, matched_df = _load_or_build_matched_artifacts(config)
+        outputs = prepare_stage4_acaf_subset(effective, matched_df, paths, chromosome=args.chromosome)
+        print(
+            f"Prepared Stage 4 ACAF subset on {args.chromosome} for {matched_df['person_id'].astype(str).nunique()} matched samples."
+        )
         for name, path in outputs.items():
             print(f"{name}: {path}")
         return 0

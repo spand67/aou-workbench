@@ -409,8 +409,15 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
         checks.append(_planned_output_check(effective.analysis.stage2.variant_table, "output:stage2"))
     if effective.analysis.run_stage3 and effective.analysis.stage3:
         checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage3.variant_table, "input:stage3"))
-    if effective.analysis.run_stage4 and effective.analysis.stage4:
-        checks.append(_check_input_reference(effective.workbench.workspace_cdr, effective.analysis.stage4.genotype_table, "input:stage4"))
+    if effective.analysis.stage4:
+        checks.append(
+            _check_local_or_gcs_path(
+                effective.workbench.acaf_mt_path,
+                "input:acaf_mt",
+                effective.workbench.requester_pays_project,
+            )
+        )
+        checks.append(_planned_output_check(effective.analysis.stage4.genotype_table, "output:stage4"))
     checks.append(_bigquery_check(effective.workbench.workspace_cdr))
     checks.append(_tool_check("gsutil", name="tool:gsutil", required_for="Workbench bucket and genomics bucket access"))
     checks.append(_hail_check())

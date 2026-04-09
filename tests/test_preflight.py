@@ -61,6 +61,8 @@ class PreflightTests(unittest.TestCase):
         self.assertIn("output:stage1", names)
         self.assertIn("input:clinvar_mt", names)
         self.assertIn("output:stage2", names)
+        self.assertIn("input:acaf_mt", names)
+        self.assertIn("output:stage4", names)
         self.assertNotIn("input:stage1", names)
         self.assertNotIn("input:stage2", names)
 

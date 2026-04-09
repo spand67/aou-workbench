@@ -8,6 +8,6 @@ wgs_vds_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/vds/ha
 vat_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/aux/vat/vat_complete.bgz.tsv.gz
 exome_mt_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/exome/multiMT/hail.mt
 clinvar_mt_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/clinvar/multiMT/hail.mt
-acaf_mt_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/acaf_threshold/hail.mt
+acaf_mt_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/acaf_threshold/multiMT/hail.mt
 flagged_samples_path:
 max_unrelated_path:

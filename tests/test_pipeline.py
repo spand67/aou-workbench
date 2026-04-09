@@ -37,12 +37,15 @@ class PipelineIntegrationTests(unittest.TestCase):
         with (
             mock.patch("aou_workbench.pipeline.prepare_stage1_variant_table") as mock_prepare_stage1,
             mock.patch("aou_workbench.pipeline.prepare_stage2_variant_table") as mock_prepare_stage2,
+            mock.patch("aou_workbench.pipeline.prepare_stage4_acaf_subset") as mock_prepare_stage4,
         ):
             mock_prepare_stage1.return_value = pd.read_csv(paths["stage1_table"], sep="\t")
             mock_prepare_stage2.return_value = pd.read_csv(paths["stage2_table"], sep="\t")
+            mock_prepare_stage4.return_value = {}
             output_paths = run_all(config, skip_preflight=True)
         mock_prepare_stage1.assert_called_once()
         mock_prepare_stage2.assert_called_once()
+        mock_prepare_stage4.assert_called_once()
         expected = [
             output_paths.built_cohort_tsv,
             output_paths.matched_cohort_tsv,

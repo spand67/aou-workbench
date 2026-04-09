@@ -14,13 +14,13 @@ DEFAULT_VAT_PATH = (
     f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/aux/vat/vat_complete.bgz.tsv.gz"
 )
 DEFAULT_EXOME_MT_PATH = (
-    f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/exome/hail.mt"
+    f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/exome/multiMT/hail.mt"
 )
 DEFAULT_CLINVAR_MT_PATH = (
-    f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/clinvar/hail.mt"
+    f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/clinvar/multiMT/hail.mt"
 )
 DEFAULT_ACAF_MT_PATH = (
-    f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/acaf_threshold/hail.mt"
+    f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/acaf_threshold/multiMT/hail.mt"
 )
 DEFAULT_COVARIATES = (
     "age_at_index",
