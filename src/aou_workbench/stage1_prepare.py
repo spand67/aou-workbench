@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 import io
 import os
 from pathlib import Path
@@ -99,23 +100,62 @@ def _gsutil_base_cmd(config: ProjectConfig) -> list[str]:
     return cmd
 
 
-def _discover_remote_vcf_shards(config: ProjectConfig, root: str, contigs: list[str]) -> list[str]:
-    listing = _run_checked([*_gsutil_base_cmd(config), "ls", f"{root}/**"]).stdout.splitlines()
+def _target_positions_by_contig(target_df: pd.DataFrame) -> dict[str, list[int]]:
+    grouped = (
+        target_df.loc[:, ["contig", "position"]]
+        .dropna()
+        .assign(position=lambda frame: frame["position"].astype(int))
+        .groupby("contig")["position"]
+    )
+    return {str(contig): sorted(int(value) for value in values.unique()) for contig, values in grouped}
+
+
+def _interval_file_overlaps_targets(path: str, targets_by_contig: dict[str, list[int]]) -> bool:
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            if not line or line.startswith("@"):
+                continue
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) < 3:
+                continue
+            contig = fields[0]
+            try:
+                start = int(fields[1])
+                end = int(fields[2])
+            except ValueError:
+                continue
+            positions = targets_by_contig.get(contig)
+            if not positions:
+                continue
+            index = bisect_left(positions, start)
+            if index < len(positions) and positions[index] <= end:
+                return True
+    return False
+
+
+def _discover_remote_vcf_shards(
+    config: ProjectConfig,
+    root: str,
+    *,
+    target_df: pd.DataFrame,
+    temp_root: str,
+) -> list[str]:
+    interval_listing = _run_checked([*_gsutil_base_cmd(config), "ls", f"{root}/*.interval_list"]).stdout.splitlines()
+    interval_listing = [line.strip() for line in interval_listing if line.strip().endswith(".interval_list")]
+    if not interval_listing:
+        return []
+
+    targets_by_contig = _target_positions_by_contig(target_df)
+    interval_dir = os.path.join(temp_root, "intervals")
+    os.makedirs(interval_dir, exist_ok=True)
+    _run_checked([*_gsutil_base_cmd(config), "-m", "cp", f"{root}/*.interval_list", interval_dir])
+
     wanted: list[str] = []
-    for line in listing:
-        candidate = line.strip()
-        lowered = candidate.lower()
-        if not (lowered.endswith(".vcf.bgz") or lowered.endswith(".vcf.gz")):
+    for interval_path in sorted(Path(interval_dir).glob("*.interval_list")):
+        if not _interval_file_overlaps_targets(str(interval_path), targets_by_contig):
             continue
-        for contig in contigs:
-            token = contig.lower()
-            chrom = token[3:] if token.startswith("chr") else token
-            if f"chr{chrom}" in lowered:
-                wanted.append(candidate)
-                break
-            if re.search(rf"(^|[^0-9]){re.escape(chrom)}([^0-9]|$)", lowered):
-                wanted.append(candidate)
-                break
+        shard_stem = interval_path.stem
+        wanted.append(f"{root}/{shard_stem}.vcf.bgz")
     return sorted(set(wanted))
 
 
@@ -157,13 +197,18 @@ def _extract_from_vcf_callset(
     if shutil.which("gsutil") is None:
         raise RuntimeError("gsutil is required for Stage 1 smaller-callset extraction.")
 
-    contigs = sorted(target_df["contig"].dropna().astype(str).unique())
-    remote_vcfs = _discover_remote_vcf_shards(config, vcf_root, contigs)
-    if not remote_vcfs:
-        raise RuntimeError(f"No VCF shards found under {vcf_root} for contigs {', '.join(contigs)}")
-
     temp_root = tempfile.mkdtemp(prefix=f"stage1-vcf-{callset_name}-")
     try:
+        remote_vcfs = _discover_remote_vcf_shards(
+            config,
+            vcf_root,
+            target_df=target_df,
+            temp_root=temp_root,
+        )
+        if not remote_vcfs:
+            contigs = sorted(target_df["contig"].dropna().astype(str).unique())
+            raise RuntimeError(f"No VCF shards found under {vcf_root} for contigs {', '.join(contigs)}")
+
         sample_path = os.path.join(temp_root, "samples.txt")
         regions_path = os.path.join(temp_root, "targets.tsv")
         with open(sample_path, "w", encoding="utf-8") as handle:

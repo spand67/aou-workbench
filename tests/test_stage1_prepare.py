@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from unittest import mock
 
@@ -11,9 +12,11 @@ from aou_workbench.stage1_prepare import (
     _collapse_stage1_rows,
     _discover_remote_vcf_shards,
     _gt_to_dosage,
+    _interval_file_overlaps_targets,
     _normalize_contig,
     _panel_targets_frame,
     _split_mt_path,
+    _target_positions_by_contig,
     _vcf_root,
 )
 from tests.support import build_demo_project_tree
@@ -93,25 +96,65 @@ class Stage1PrepareTests(unittest.TestCase):
         self.assertEqual(_normalize_contig("1"), "chr1")
         self.assertEqual(_normalize_contig("chr19"), "chr19")
 
-    def test_discover_remote_vcf_shards_supports_nested_paths(self) -> None:
-        fake_listing = "\n".join(
+    def test_interval_file_overlap_uses_target_positions(self) -> None:
+        targets = _target_positions_by_contig(
+            pd.DataFrame(
+                [
+                    {"contig": "chr1", "position": 100},
+                    {"contig": "chr1", "position": 220},
+                    {"contig": "chr19", "position": 500},
+                ]
+            )
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".interval_list") as handle:
+            handle.write("@HD\tVN:1.6\tSO:coordinate\n")
+            handle.write("chr1\t90\t110\t+\ttarget\n")
+            handle.write("chr19\t700\t750\t+\ttarget\n")
+            handle.flush()
+            self.assertTrue(_interval_file_overlaps_targets(handle.name, targets))
+
+    def test_discover_remote_vcf_shards_uses_interval_lists(self) -> None:
+        target_df = pd.DataFrame(
             [
-                "gs://bucket/exome/vcf/chr1/part-000.vcf.bgz",
-                "gs://bucket/exome/vcf/chr1/part-000.vcf.bgz.tbi",
-                "gs://bucket/exome/vcf/chr11/shard_01.vcf.gz",
-                "gs://bucket/exome/vcf/chr20/part-000.vcf.bgz",
+                {"contig": "chr1", "position": 105},
+                {"contig": "chr19", "position": 500},
             ]
         )
-        with mock.patch("aou_workbench.stage1_prepare._run_checked") as run_checked:
-            run_checked.return_value = mock.Mock(stdout=fake_listing)
-            shards = _discover_remote_vcf_shards(mock.Mock(), "gs://bucket/exome/vcf", ["chr1", "chr11"])
-        self.assertEqual(
-            shards,
+        fake_listing = "\n".join(
             [
-                "gs://bucket/exome/vcf/chr1/part-000.vcf.bgz",
-                "gs://bucket/exome/vcf/chr11/shard_01.vcf.gz",
-            ],
+                "gs://bucket/exome/vcf/0000000000.interval_list",
+                "gs://bucket/exome/vcf/0000000001.interval_list",
+            ]
         )
+        config = mock.Mock()
+        config.workbench.requester_pays_project = None
+        with tempfile.TemporaryDirectory() as temp_root:
+            interval_dir = f"{temp_root}/intervals"
+
+            def fake_run_checked(cmd: list[str]) -> mock.Mock:
+                if "ls" in cmd and cmd[-1] == "gs://bucket/exome/vcf/*.interval_list":
+                    return mock.Mock(stdout=fake_listing)
+                if "cp" in cmd and "gs://bucket/exome/vcf/*.interval_list" in cmd:
+                    import os
+
+                    os.makedirs(interval_dir, exist_ok=True)
+                    with open(f"{interval_dir}/0000000000.interval_list", "w", encoding="utf-8") as handle:
+                        handle.write("@HD\tVN:1.6\tSO:coordinate\n")
+                        handle.write("chr1\t100\t110\t+\ttarget\n")
+                    with open(f"{interval_dir}/0000000001.interval_list", "w", encoding="utf-8") as handle:
+                        handle.write("@HD\tVN:1.6\tSO:coordinate\n")
+                        handle.write("chr2\t100\t110\t+\ttarget\n")
+                    return mock.Mock(stdout="")
+                raise AssertionError(f"Unexpected command: {cmd}")
+
+            with mock.patch("aou_workbench.stage1_prepare._run_checked", side_effect=fake_run_checked):
+                shards = _discover_remote_vcf_shards(
+                    config,
+                    "gs://bucket/exome/vcf",
+                    target_df=target_df,
+                    temp_root=temp_root,
+                )
+        self.assertEqual(shards, ["gs://bucket/exome/vcf/0000000000.vcf.bgz"])
 
 
 if __name__ == "__main__":
