@@ -47,6 +47,7 @@ def _design_matrix(
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     subset = sample_df[["person_id", outcome_column, *covariates]].copy()
     subset = subset.dropna(subset=[outcome_column])
+    subset["person_id"] = subset["person_id"].astype(str)
     subset["exposure"] = subset["person_id"].map(exposure_by_person).fillna(0.0)
     subset = subset.dropna()
     y = subset[outcome_column].astype(float).to_numpy()
@@ -73,6 +74,7 @@ def summarize_binary_exposure(
 ) -> dict[str, float]:
     analysis = sample_df[["person_id", outcome_column]].copy()
     analysis = analysis.dropna(subset=[outcome_column])
+    analysis["person_id"] = analysis["person_id"].astype(str)
     analysis["carrier"] = analysis["person_id"].map(exposure_by_person).fillna(0.0) >= carrier_threshold
     cases = analysis[analysis[outcome_column] == 1]
     controls = analysis[analysis[outcome_column] == 0]
