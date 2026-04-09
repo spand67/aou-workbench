@@ -11,6 +11,7 @@ from .io_utils import read_table
 from .paths import build_output_paths, project_path
 from .pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
 from .preflight import apply_runtime_defaults, format_preflight_report, run_preflight_checks
+from .regenie import prepare_regenie_inputs
 from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_prepare import prepare_stage2_variant_table
@@ -80,6 +81,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_config_arguments(prepare_stage2_parser)
 
+    prepare_regenie_parser = subparsers.add_parser(
+        "prepare-regenie",
+        help="Write matched phenotype/covariate files and a REGENIE ACAF command template.",
+    )
+    _add_config_arguments(prepare_regenie_parser)
+
     for name in ("run-stage1", "run-stage2", "run-stage3", "run-stage4", "run-all"):
         stage_parser = subparsers.add_parser(name, help=f"Execute {name}.")
         _add_config_arguments(stage_parser)
@@ -131,6 +138,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         print(f"Prepared Stage 2 rows: {frame.shape[0]}")
         print(stage.variant_table)
+        return 0
+
+    if args.command == "prepare-regenie":
+        effective, paths, matched_df = _load_or_build_matched_artifacts(config)
+        outputs = prepare_regenie_inputs(effective, matched_df, paths)
+        print(f"Prepared REGENIE inputs for {matched_df['person_id'].astype(str).nunique()} matched samples.")
+        for name, path in outputs.items():
+            print(f"{name}: {path}")
         return 0
 
     if args.command == "run-all":
