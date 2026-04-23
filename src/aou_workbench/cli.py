@@ -7,6 +7,7 @@ import os
 import sys
 
 from .config import load_project_config
+from .cohort_summary import cohort_summary_report_path, cohort_summary_table_path, summarize_clinical_demographics
 from .io_utils import read_table
 from .paths import build_output_paths, project_path
 from .pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
@@ -102,6 +103,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     report_parser = subparsers.add_parser("report", help="Rebuild the final markdown report from existing outputs.")
     _add_config_arguments(report_parser)
+
+    summary_parser = subparsers.add_parser(
+        "summarize-cohort",
+        help="Write a clinical/demographic comparison table for the WGS-restricted unmatched and matched analyses.",
+    )
+    _add_config_arguments(summary_parser)
     return parser
 
 
@@ -201,6 +208,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "report":
         paths = render_existing_report(config)
         print(f"Final report: {paths.final_report_md}")
+        return 0
+
+    if args.command == "summarize-cohort":
+        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
+        _, _, matched_df = _load_or_build_matched_artifacts(config)
+        frame = summarize_clinical_demographics(effective, cohort_df, matched_df, paths)
+        print(f"Cohort summary rows: {frame.shape[0]}")
+        print(cohort_summary_table_path(paths))
+        print(cohort_summary_report_path(paths))
         return 0
 
     parser.error(f"Unknown command: {args.command}")
