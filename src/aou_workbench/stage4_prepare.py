@@ -191,7 +191,7 @@ def prepare_stage4_acaf_subset(
     write_json(
         {
             "chromosome": chromosome,
-            "matched_samples_requested": int(len(sample_ids)),
+            "matched_samples_requested": int(sample_df["person_id"].astype(str).nunique()),
             "matched_samples_in_subset": int(col_count),
             "variant_rows_in_subset": int(row_count),
             "nonref_entries_written": int(len(genotype_df)),

@@ -21,6 +21,7 @@ class PreflightTests(unittest.TestCase):
         )
         config = replace(
             config,
+            workbench=replace(config.workbench, max_unrelated_path=paths["max_unrelated"]),
             analysis=replace(
                 config.analysis,
                 run_stage1=False,
@@ -62,6 +63,7 @@ class PreflightTests(unittest.TestCase):
         self.assertIn("input:clinvar_mt", names)
         self.assertIn("output:stage2", names)
         self.assertIn("input:acaf_mt", names)
+        self.assertIn("input:max_unrelated", names)
         self.assertIn("output:stage4", names)
         self.assertNotIn("input:stage1", names)
         self.assertNotIn("input:stage2", names)

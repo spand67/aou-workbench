@@ -12,7 +12,7 @@ stage1:
   dosage_column: dosage
   gene_column: gene
   carrier_min_dosage: 1.0
-  covariates: [age_at_index, is_female, pc1, pc2, pc3, crush_injury, sepsis, renal_injury]
+  covariates: [age_at_index, is_female, pc1, pc2, pc3, pc4, pc5, crush_injury, sepsis, renal_injury]
 stage2:
   variant_table: ./outputs/derived/rhabdo_stage2_rare_variants.tsv
   person_id_column: person_id
@@ -25,7 +25,7 @@ stage2:
   af_column: max_af
   max_af: 0.01
   revel_min: 0.8
-  covariates: [age_at_index, is_female, pc1, pc2, pc3, crush_injury, sepsis, renal_injury]
+  covariates: [age_at_index, is_female, pc1, pc2, pc3, pc4, pc5, crush_injury, sepsis, renal_injury]
 stage3:
   variant_table: ./outputs/derived/rhabdo_stage3_burden_variants.tsv
   mode: targeted
@@ -41,7 +41,7 @@ stage3:
   max_af: 0.01
   revel_min: 0.8
   masks: [pLoF, ClinVar_PLP, pLoF_or_REVEL_0_8]
-  covariates: [age_at_index, is_female, pc1, pc2, pc3, crush_injury, sepsis, renal_injury]
+  covariates: [age_at_index, is_female, pc1, pc2, pc3, pc4, pc5, crush_injury, sepsis, renal_injury]
 stage4:
   genotype_table: ./outputs/derived/rhabdo_stage4_gwas_genotypes.tsv
   annotation_table: ./outputs/derived/rhabdo_stage4_gwas_annotations.tsv
@@ -52,7 +52,7 @@ stage4:
   position_column: position
   gene_column: gene
   af_column: maf
-  covariates: [age_at_index, is_female, pc1, pc2, pc3, crush_injury, sepsis, renal_injury]
+  covariates: [age_at_index, is_female, pc1, pc2, pc3, pc4, pc5, crush_injury, sepsis, renal_injury]
   min_maf: 0.01
   min_minor_allele_count: 5
   pvalue_threshold: 5.0e-08

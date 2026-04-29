@@ -7,13 +7,39 @@ from unittest import mock
 import pandas as pd
 
 from aou_workbench.config import load_project_config
-from aou_workbench.pipeline import run_all
+from dataclasses import replace
+
+from aou_workbench.pipeline import match_controls_artifacts, run_all
 from aou_workbench.stage1_prepare import stage1_sample_manifest_path
 from aou_workbench.stage2_prepare import stage2_sample_manifest_path
 from tests.support import build_demo_project_tree
 
 
 class PipelineIntegrationTests(unittest.TestCase):
+    def test_match_controls_artifacts_restricts_to_wgs_and_optional_max_unrelated(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        pd.DataFrame({"person_id": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]}).to_csv(
+            stage1_sample_manifest_path(paths["stage1_table"]),
+            sep="\t",
+            index=False,
+        )
+        config = replace(
+            config,
+            workbench=replace(config.workbench, max_unrelated_path=paths["max_unrelated"]),
+        )
+
+        _, _, matched_df = match_controls_artifacts(config)
+
+        allowed = {str(person_id) for person_id in range(1, 11)}
+        self.assertTrue(set(matched_df["person_id"].astype(str)).issubset(allowed))
+
     def test_run_all_writes_expected_outputs(self) -> None:
         paths = build_demo_project_tree()
         config = load_project_config(

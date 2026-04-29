@@ -32,20 +32,25 @@ class RegeniePreparationTests(unittest.TestCase):
         for path in outputs.values():
             self.assertTrue(Path(path).exists(), path)
 
+        matched_manifest = pd.read_csv(outputs["matched_samples"], sep="\t")
+        gwas_manifest = pd.read_csv(outputs["gwas_samples"], sep="\t")
         keep = pd.read_csv(outputs["keep"], sep="\t")
         pheno = pd.read_csv(outputs["phenotypes"], sep="\t")
         covar = pd.read_csv(outputs["covariates"], sep="\t")
+        covar_numeric = pd.read_csv(outputs["covariates_numeric"], sep="\t")
         commands = Path(outputs["commands"]).read_text(encoding="utf-8")
 
+        self.assertGreaterEqual(len(matched_manifest), len(gwas_manifest))
         self.assertIn("FID", keep.columns)
         self.assertIn("IID", pheno.columns)
         self.assertIn("rhabdo_case", pheno.columns)
         self.assertIn("ancestry_pred", covar.columns)
+        self.assertNotIn("ancestry_pred", covar_numeric.columns)
         self.assertIn("--step 1", commands)
         self.assertIn("--step 2", commands)
         self.assertIn("--catCovarList \"ancestry_pred\"", commands)
-        self.assertIn("STEP2_PGEN_PREFIX_TEMPLATE", commands)
-        self.assertIn("STEP2_PGEN_PREFIX=\"${STEP2_PGEN_PREFIX_TEMPLATE/", commands)
+        self.assertIn("STEP2_BED_PREFIX_TEMPLATE", commands)
+        self.assertIn("--bed", commands)
 
 
 if __name__ == "__main__":

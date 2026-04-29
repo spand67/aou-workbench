@@ -135,6 +135,9 @@ def build_demo_project_tree() -> dict[str, str]:
         "root": str(root),
         "output_dir": str(outputs),
     }
+    max_unrelated_path = inputs / "max_unrelated.tsv"
+    _write_table(max_unrelated_path, [{"person_id": str(person_id)} for person_id in range(1, 13)])
+    paths["max_unrelated"] = str(max_unrelated_path)
 
     workbench = {
         "storage_root": str(outputs),
@@ -241,6 +244,9 @@ def build_demo_project_tree() -> dict[str, str]:
         (config_paths["analysis"], analysis),
     ):
         Path(path).write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    stage1_manifest_path = Path(paths["stage1_table"]).with_suffix(".samples.tsv")
+    _write_table(stage1_manifest_path, [{"person_id": str(person_id)} for person_id in range(1, 16)])
 
     paths.update(config_paths)
     return paths

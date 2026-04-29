@@ -19,6 +19,7 @@ from .phenotype_sql import (
 )
 from .preflight import apply_runtime_defaults, assert_preflight_ok, run_preflight_checks
 from .reporting import load_table_if_exists, write_final_report
+from .sample_restriction import restrict_frame_for_gwas
 from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_prepare import prepare_stage2_variant_table
@@ -65,9 +66,12 @@ def match_controls_artifacts(config: ProjectConfig, cohort_df: pd.DataFrame | No
     paths = build_output_paths(effective)
     if cohort_df is None:
         cohort_df = build_rhabdo_cohort(effective)
-    matched_df = match_case_controls(cohort_df, effective)
+    matching_universe = restrict_frame_for_gwas(effective, cohort_df, require_wgs=True)
+    matched_df = match_case_controls(matching_universe, effective)
     write_dataframe(matched_df, paths.matched_cohort_tsv)
     qc_payload = cohort_qc_summary(cohort_df)
+    qc_payload["matching_universe_rows"] = int(len(matching_universe))
+    qc_payload["matching_universe_people"] = int(matching_universe["person_id"].astype(str).nunique())
     qc_payload.update(matching_qc_summary(matched_df))
     write_json(qc_payload, paths.cohort_qc_json)
     _write_manifest(effective, paths, extra={"matched_rows": int(len(matched_df))})
@@ -81,11 +85,14 @@ def run_all(config: ProjectConfig, *, skip_preflight: bool = False) -> ProjectPa
         checks = run_preflight_checks(effective)
         assert_preflight_ok(checks)
     cohort_df = build_rhabdo_cohort(effective)
-    matched_df = match_case_controls(cohort_df, effective)
+    matching_universe = restrict_frame_for_gwas(effective, cohort_df, require_wgs=True)
+    matched_df = match_case_controls(matching_universe, effective)
     write_dataframe(cohort_df, paths.built_cohort_tsv)
     write_dataframe(matched_df, paths.matched_cohort_tsv)
     _write_rendered_sql(effective, paths)
     qc_payload = cohort_qc_summary(cohort_df)
+    qc_payload["matching_universe_rows"] = int(len(matching_universe))
+    qc_payload["matching_universe_people"] = int(matching_universe["person_id"].astype(str).nunique())
     qc_payload.update(matching_qc_summary(matched_df))
     write_json(qc_payload, paths.cohort_qc_json)
 

@@ -418,6 +418,14 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
             )
         )
         checks.append(_planned_output_check(effective.analysis.stage4.genotype_table, "output:stage4"))
+    if effective.workbench.max_unrelated_path:
+        checks.append(
+            _check_input_reference(
+                effective.workbench.workspace_cdr,
+                effective.workbench.max_unrelated_path,
+                "input:max_unrelated",
+            )
+        )
     checks.append(_bigquery_check(effective.workbench.workspace_cdr))
     checks.append(_tool_check("gsutil", name="tool:gsutil", required_for="Workbench bucket and genomics bucket access"))
     checks.append(_hail_check())

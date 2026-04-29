@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 
 import pandas as pd
@@ -95,6 +96,7 @@ class Stage1PriorVariantTests(unittest.TestCase):
             analysis_path=paths["analysis"],
         )
         cohort_df = build_rhabdo_cohort(config)
+        Path(stage1_sample_manifest_path(config.analysis.stage1.variant_table)).unlink(missing_ok=True)
 
         with self.assertRaises(RuntimeError):
             _restrict_to_stage1_wgs_samples(cohort_df, config)

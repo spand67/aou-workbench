@@ -43,6 +43,8 @@ class CohortSummaryTests(unittest.TestCase):
         self.assertIn("unmatched_non_rhabdo_wgs", summary.columns)
         self.assertIn("matched_rhabdo_wgs", summary.columns)
         self.assertIn("matched_controls_wgs", summary.columns)
+        self.assertIn("unmatched_smd", summary.columns)
+        self.assertIn("matched_p_value", summary.columns)
         self.assertTrue(Path(cohort_summary_table_path(output_paths)).exists())
         self.assertTrue(Path(cohort_summary_report_path(output_paths)).exists())
 
@@ -50,6 +52,10 @@ class CohortSummaryTests(unittest.TestCase):
         self.assertEqual(n_row["unmatched_rhabdo_wgs"], "4")
         self.assertEqual(n_row["matched_rhabdo_wgs"], "3")
         self.assertEqual(n_row["matched_controls_wgs"], "6")
+
+        age_row = summary[summary["variable"] == "Age at index, mean (SD)"].iloc[0]
+        self.assertNotEqual(age_row["unmatched_smd"], "")
+        self.assertNotEqual(age_row["matched_p_value"], "")
 
 
 if __name__ == "__main__":

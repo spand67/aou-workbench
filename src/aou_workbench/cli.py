@@ -8,6 +8,7 @@ import sys
 
 from .config import load_project_config
 from .cohort_summary import cohort_summary_report_path, cohort_summary_table_path, summarize_clinical_demographics
+from .gwas_workflow import prepare_terminal_gwas_workspace
 from .io_utils import read_table
 from .paths import build_output_paths, project_path
 from .pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
@@ -89,6 +90,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_config_arguments(prepare_regenie_parser)
 
+    prepare_gwas_parser = subparsers.add_parser(
+        "prepare-gwas",
+        help="Generate a terminal-first matched-control GWAS workspace with REGENIE and dsub templates.",
+    )
+    _add_config_arguments(prepare_gwas_parser)
+
     prepare_stage4_parser = subparsers.add_parser(
         "prepare-stage4",
         help="Subset the ACAF smaller callset with Hail, export local PLINK files, and run a Hail pilot GWAS.",
@@ -158,7 +165,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "prepare-regenie":
         effective, paths, matched_df = _load_or_build_matched_artifacts(config)
         outputs = prepare_regenie_inputs(effective, matched_df, paths)
-        print(f"Prepared REGENIE inputs for {matched_df['person_id'].astype(str).nunique()} matched samples.")
+        keep_df = read_table(outputs["keep"])
+        print(
+            f"Prepared REGENIE inputs for {len(keep_df)} GWAS-eligible matched samples "
+            f"(from {matched_df['person_id'].astype(str).nunique()} matched participants)."
+        )
+        for name, path in outputs.items():
+            print(f"{name}: {path}")
+        return 0
+
+    if args.command == "prepare-gwas":
+        effective, paths, matched_df = _load_or_build_matched_artifacts(config)
+        outputs = prepare_terminal_gwas_workspace(effective, matched_df, paths)
+        restricted = read_table(outputs["restricted_manifest"])
+        print(
+            f"Prepared GWAS workspace for {len(restricted)} GWAS-eligible matched samples "
+            f"(from {matched_df['person_id'].astype(str).nunique()} matched participants)."
+        )
         for name, path in outputs.items():
             print(f"{name}: {path}")
         return 0
