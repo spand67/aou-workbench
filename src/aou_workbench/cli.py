@@ -18,6 +18,15 @@ from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_prepare import prepare_stage2_variant_table
 from .stage2_plp_panel import run_stage2_plp_panel
+from .stage4_hail_gwas import (
+    hail_stage4_full_results_path,
+    hail_stage4_lead_hits_path,
+    hail_stage4_manhattan_path,
+    hail_stage4_qc_path,
+    hail_stage4_qq_path,
+    hail_stage4_report_path,
+    run_stage4_hail_gwas,
+)
 from .stage4_prepare import prepare_stage4_acaf_subset
 from .stage3_burden import run_stage3_burden
 from .stage4_gwas import run_stage4_gwas
@@ -102,6 +111,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_config_arguments(prepare_stage4_parser)
     prepare_stage4_parser.add_argument("--chromosome", default="chr19")
+
+    hail_gwas_parser = subparsers.add_parser(
+        "run-hail-gwas",
+        help="Run a Hail-native matched-control GWAS directly against the AoU ACAF split MT without local chromosome rewrites.",
+    )
+    _add_config_arguments(hail_gwas_parser)
+    hail_gwas_parser.add_argument(
+        "--chromosomes",
+        default="1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22",
+        help="Comma-separated chromosome list, e.g. '1,19,22'.",
+    )
 
     for name in ("run-stage1", "run-stage2", "run-stage3", "run-stage4", "run-all"):
         stage_parser = subparsers.add_parser(name, help=f"Execute {name}.")
@@ -194,6 +214,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         for name, path in outputs.items():
             print(f"{name}: {path}")
+        return 0
+
+    if args.command == "run-hail-gwas":
+        effective, paths, matched_df = _load_or_build_matched_artifacts(config)
+        chromosomes = [value.strip() for value in args.chromosomes.split(",") if value.strip()]
+        full, hits = run_stage4_hail_gwas(effective, matched_df, paths, chromosomes=chromosomes)
+        print(f"Hail GWAS variants tested: {full.shape[0]}")
+        print(f"Hail GWAS lead hits: {hits.shape[0]}")
+        print(f"full_results: {hail_stage4_full_results_path(paths)}")
+        print(f"lead_hits: {hail_stage4_lead_hits_path(paths)}")
+        print(f"qc: {hail_stage4_qc_path(paths)}")
+        print(f"report: {hail_stage4_report_path(paths)}")
+        print(f"manhattan: {hail_stage4_manhattan_path(paths)}")
+        print(f"qq: {hail_stage4_qq_path(paths)}")
         return 0
 
     if args.command == "run-all":
