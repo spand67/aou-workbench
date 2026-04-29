@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from .config import ProjectConfig
+from .sample_restriction import has_wgs_manifest, restrict_frame_for_gwas
 
 
 def _control_anchor_date(controls: pd.DataFrame) -> pd.Series:
@@ -42,8 +43,19 @@ def _prepare_matching_inputs(cohort_df: pd.DataFrame, config: ProjectConfig) -> 
     return cases, control_groups
 
 
+def matching_universe(cohort_df: pd.DataFrame, config: ProjectConfig) -> pd.DataFrame:
+    if has_wgs_manifest(config):
+        return restrict_frame_for_gwas(config, cohort_df, require_wgs=True)
+    if config.workbench.max_unrelated_path:
+        raise RuntimeError(
+            "Configured max-unrelated matching restriction requires the Stage 1 WGS sample manifest. "
+            "Run `aou-workbench prepare-stage1` first."
+        )
+    return cohort_df.copy()
+
+
 def match_case_controls(cohort_df: pd.DataFrame, config: ProjectConfig) -> pd.DataFrame:
-    cases, control_groups = _prepare_matching_inputs(cohort_df, config)
+    cases, control_groups = _prepare_matching_inputs(matching_universe(cohort_df, config), config)
     if cases.empty or not control_groups:
         return pd.DataFrame(columns=list(cohort_df.columns) + ["analysis_case", "match_group_id"])
 
@@ -123,4 +135,4 @@ def matching_qc_summary(matched_df: pd.DataFrame) -> dict[str, int]:
     }
 
 
-__all__ = ["match_case_controls", "matching_qc_summary"]
+__all__ = ["match_case_controls", "matching_qc_summary", "matching_universe"]
