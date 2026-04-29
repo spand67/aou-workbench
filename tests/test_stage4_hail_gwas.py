@@ -41,14 +41,14 @@ class Stage4HailGwasTests(unittest.TestCase):
         matched_df.loc[matched_df.index[0], "pc1"] = None
         matched_df.loc[matched_df.index[1], "ancestry_pred"] = ""
 
-        sample_df, hail_covariates, raw_covariates = _hail_sample_frame(matched_df, config)
+        sample_df, hail_covariates, raw_covariates, dropped_covariates = _hail_sample_frame(matched_df, config)
 
         self.assertLess(len(sample_df), matched_df["person_id"].astype(str).nunique())
         self.assertIn("age_at_index", hail_covariates)
         self.assertIn("pc1", hail_covariates)
         self.assertIn("ancestry_pred", raw_covariates)
         self.assertNotIn("ancestry_pred", hail_covariates)
-        self.assertTrue(any(column.startswith("ancestry_") for column in hail_covariates))
+        self.assertNotIn("ancestry_pred", dropped_covariates)
         self.assertFalse(sample_df[hail_covariates + [config.analysis.matched_outcome_column]].isna().any().any())
         self.assertTrue(set(sample_df["person_id"].astype(str)).issubset({str(person_id) for person_id in range(1, 11)}))
 

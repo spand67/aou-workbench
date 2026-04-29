@@ -63,41 +63,75 @@ def _normalize_chromosomes(chromosomes: list[str] | None) -> list[str]:
     return normalized
 
 
+def _is_binary_series(series: pd.Series) -> bool:
+    observed = set(series.dropna().astype(float).unique())
+    return observed.issubset({0.0, 1.0})
+
+
+def _stable_hail_covariates(
+    sample: pd.DataFrame,
+    outcome_column: str,
+    candidate_covariates: list[str],
+) -> tuple[list[str], list[str]]:
+    kept: list[str] = []
+    dropped: list[str] = []
+    outcome = sample[outcome_column].astype(float)
+
+    for column in candidate_covariates:
+        if column not in sample.columns:
+            continue
+        values = sample[column]
+        if values.dropna().nunique() <= 1:
+            dropped.append(column)
+            continue
+        if _is_binary_series(values):
+            contingency = (
+                pd.crosstab(values.astype(float), outcome)
+                .reindex(index=[0.0, 1.0], columns=[0.0, 1.0], fill_value=0)
+            )
+            if (contingency.loc[1.0, 0.0] == 0) or (contingency.loc[1.0, 1.0] == 0):
+                dropped.append(column)
+                continue
+        kept.append(column)
+    return kept, dropped
+
+
 def _hail_sample_frame(
     matched_df: pd.DataFrame,
     config: ProjectConfig,
-) -> tuple[pd.DataFrame, list[str], list[str]]:
+) -> tuple[pd.DataFrame, list[str], list[str], list[str]]:
     restricted = restrict_frame_for_gwas(config, matched_df, require_wgs=True).copy()
     restricted["person_id"] = restricted["person_id"].astype(str)
 
     stage = config.analysis.stage4
     covariates = [column for column in stage.covariates if column != config.analysis.matched_outcome_column]
-    if "ancestry_pred" in config.cohort.exact_match_columns and "ancestry_pred" not in covariates:
-        covariates.append("ancestry_pred")
+    raw_covariates = list(covariates)
+    if "ancestry_pred" in config.cohort.exact_match_columns and "ancestry_pred" not in raw_covariates:
+        raw_covariates.append("ancestry_pred")
 
-    columns = ["person_id", config.analysis.matched_outcome_column, *[column for column in covariates if column in restricted.columns]]
+    columns = ["person_id", config.analysis.matched_outcome_column, *[column for column in raw_covariates if column in restricted.columns]]
     sample = restricted[columns].drop_duplicates(subset=["person_id"]).copy()
 
-    numeric_covariates = [column for column in covariates if column != "ancestry_pred" and column in sample.columns]
+    numeric_covariates = [column for column in raw_covariates if column != "ancestry_pred" and column in sample.columns]
     for column in [config.analysis.matched_outcome_column, *numeric_covariates]:
         if column in sample.columns:
             sample[column] = pd.to_numeric(sample[column], errors="coerce")
 
-    hail_covariates = list(numeric_covariates)
     if "ancestry_pred" in sample.columns:
         sample["ancestry_pred"] = sample["ancestry_pred"].replace("", pd.NA)
-        ancestry_dummies = pd.get_dummies(sample["ancestry_pred"], prefix="ancestry", dtype=float)
-        if not ancestry_dummies.empty:
-            reference = sorted(ancestry_dummies.columns)[0]
-            ancestry_dummies = ancestry_dummies.drop(columns=[reference])
-            for column in ancestry_dummies.columns:
-                sample[column] = ancestry_dummies[column]
-            hail_covariates.extend(ancestry_dummies.columns.tolist())
 
-    required = ["person_id", config.analysis.matched_outcome_column, *hail_covariates]
+    required = ["person_id", config.analysis.matched_outcome_column, *numeric_covariates]
     complete = sample.dropna(subset=[column for column in required if column in sample.columns]).copy()
+    hail_covariates, dropped_covariates = _stable_hail_covariates(
+        complete,
+        config.analysis.matched_outcome_column,
+        numeric_covariates,
+    )
+    complete = complete.dropna(
+        subset=[column for column in [config.analysis.matched_outcome_column, *hail_covariates] if column in complete.columns]
+    ).copy()
     complete["s"] = complete["person_id"].astype(str)
-    return complete, hail_covariates, covariates
+    return complete, hail_covariates, raw_covariates, dropped_covariates
 
 
 def _lead_hit_subset(df: pd.DataFrame, window_bp: int) -> pd.DataFrame:
@@ -136,6 +170,7 @@ def _postprocess_results(
     matched_samples_requested: int,
     matched_samples_analyzed: int,
     covariates_used: list[str],
+    dropped_covariates: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     stage = config.analysis.stage4
     if stage is None:
@@ -164,6 +199,7 @@ def _postprocess_results(
             "n_lead_hits": int(lead_hits.shape[0]),
             "lambda_gc": genomic_control_lambda(full["regression_p"].values if not full.empty else []),
             "covariates_used": covariates_used,
+            "dropped_covariates": dropped_covariates,
         },
         hail_stage4_qc_path(paths),
     )
@@ -176,6 +212,11 @@ def _postprocess_results(
             f"- Lead hits: {lead_hits.shape[0]}",
             f"- MAF threshold: {stage.min_maf}",
             f"- Covariates: {', '.join(covariates_used) if covariates_used else 'intercept only'}",
+            (
+                f"- Dropped unstable Hail covariates: {', '.join(dropped_covariates)}"
+                if dropped_covariates
+                else "- Dropped unstable Hail covariates: none"
+            ),
         ],
         preview_df=lead_hits if not lead_hits.empty else full,
         preview_columns=["variant_id", "chromosome", "position", "regression_p", "fdr_q", "beta", "odds_ratio"],
@@ -196,7 +237,7 @@ def run_stage4_hail_gwas(
         return pd.DataFrame(), pd.DataFrame()
 
     chromosome_values = _normalize_chromosomes(chromosomes)
-    sample_df, hail_covariates, raw_covariates = _hail_sample_frame(matched_df, config)
+    sample_df, hail_covariates, raw_covariates, dropped_covariates = _hail_sample_frame(matched_df, config)
     if sample_df.empty:
         return _postprocess_results(
             pd.DataFrame(),
@@ -205,6 +246,7 @@ def run_stage4_hail_gwas(
             matched_samples_requested=int(matched_df["person_id"].astype(str).nunique()),
             matched_samples_analyzed=0,
             covariates_used=raw_covariates,
+            dropped_covariates=dropped_covariates,
         )
 
     hl = ensure_hail(
@@ -296,7 +338,8 @@ def run_stage4_hail_gwas(
         paths,
         matched_samples_requested=int(matched_df["person_id"].astype(str).nunique()),
         matched_samples_analyzed=int(sample_df["s"].nunique()),
-        covariates_used=raw_covariates,
+        covariates_used=hail_covariates,
+        dropped_covariates=dropped_covariates,
     )
 
 
