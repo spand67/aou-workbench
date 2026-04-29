@@ -135,8 +135,8 @@ def build_demo_project_tree() -> dict[str, str]:
         "root": str(root),
         "output_dir": str(outputs),
     }
-    max_unrelated_path = inputs / "max_unrelated.tsv"
-    _write_table(max_unrelated_path, [{"person_id": str(person_id)} for person_id in range(1, 13)])
+    max_unrelated_path = inputs / "relatedness_flagged_samples.tsv"
+    _write_table(max_unrelated_path, [{"person_id": str(person_id)} for person_id in (11, 12)])
     paths["max_unrelated"] = str(max_unrelated_path)
 
     workbench = {

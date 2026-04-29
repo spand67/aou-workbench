@@ -56,6 +56,8 @@ class GwasWorkflowPreparationTests(unittest.TestCase):
 
         restricted = pd.read_csv(outputs["restricted_manifest"], sep="\t")
         self.assertFalse(restricted.empty)
+        self.assertNotIn("11", set(restricted["IID"].astype(str)))
+        self.assertNotIn("12", set(restricted["IID"].astype(str)))
 
         rewrite_script = Path(outputs["rewrite_script"]).read_text(encoding="utf-8")
         step2_script = Path(outputs["step2_script"]).read_text(encoding="utf-8")

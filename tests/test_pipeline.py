@@ -25,7 +25,7 @@ class PipelineIntegrationTests(unittest.TestCase):
             panel_path=paths["panel"],
             analysis_path=paths["analysis"],
         )
-        pd.DataFrame({"person_id": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]}).to_csv(
+        pd.DataFrame({"person_id": [str(person_id) for person_id in range(1, 13)]}).to_csv(
             stage1_sample_manifest_path(paths["stage1_table"]),
             sep="\t",
             index=False,

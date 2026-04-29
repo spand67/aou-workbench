@@ -31,6 +31,11 @@ def _load_id_set(path: str) -> set[str]:
     return ids
 
 
+def _is_flagged_sample_list(path: str) -> bool:
+    lowered = Path(path).name.lower()
+    return "flagged" in lowered or "remove" in lowered
+
+
 def wgs_manifest_path(config: ProjectConfig) -> str:
     stage = config.analysis.stage1
     if stage is None:
@@ -73,6 +78,13 @@ def max_unrelated_ids(config: ProjectConfig, *, require: bool = False) -> set[st
     return _load_id_set(path)
 
 
+def max_unrelated_mode(config: ProjectConfig) -> str | None:
+    path = config.workbench.max_unrelated_path
+    if not path:
+        return None
+    return "exclude" if _is_flagged_sample_list(path) else "include"
+
+
 def gwas_universe_ids(
     config: ProjectConfig,
     *,
@@ -83,7 +95,15 @@ def gwas_universe_ids(
     ids = set(wgs_ids or ())
     unrelated_ids = max_unrelated_ids(config, require=require_max_unrelated)
     if unrelated_ids is not None:
-        ids = ids.intersection(unrelated_ids) if ids else set(unrelated_ids)
+        mode = max_unrelated_mode(config)
+        if mode == "exclude":
+            if not ids:
+                raise RuntimeError(
+                    "Max-unrelated flagged-sample exclusion requires a WGS sample universe to subtract from."
+                )
+            ids = ids.difference(unrelated_ids)
+        else:
+            ids = ids.intersection(unrelated_ids) if ids else set(unrelated_ids)
     return ids
 
 
@@ -121,6 +141,7 @@ __all__ = [
     "has_max_unrelated_file",
     "has_wgs_manifest",
     "max_unrelated_ids",
+    "max_unrelated_mode",
     "restrict_frame_for_gwas",
     "restrict_frame_to_ids",
     "wgs_manifest_path",
