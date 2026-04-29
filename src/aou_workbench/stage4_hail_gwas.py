@@ -226,6 +226,8 @@ def run_stage4_hail_gwas(
     mt = mt.filter_rows(hl.len(mt.alleles) == 2)
     mt = mt.annotate_rows(call_stats=hl.agg.call_stats(mt.GT, mt.alleles))
     mt = mt.annotate_rows(
+        contig=hl.str(mt.locus.contig),
+        position=hl.int32(mt.locus.position),
         alt_ac=hl.int64(mt.call_stats.AC[1]),
         alt_af=hl.float64(mt.call_stats.AF[1]),
         minor_allele_count=hl.int64(hl.min(mt.call_stats.AC[1], mt.call_stats.AN - mt.call_stats.AC[1])),
@@ -258,8 +260,8 @@ def run_stage4_hail_gwas(
         covariates=[1.0, *[hl.float64(mt.sample[column]) for column in hail_covariates]],
         pass_through=[
             mt.variant_id,
-            mt.locus.contig,
-            mt.locus.position,
+            mt.contig,
+            mt.position,
             mt.maf,
             mt.minor_allele_count,
         ],
