@@ -13,10 +13,14 @@ from .regenie import (
     prepare_regenie_inputs,
     regenie_commands_path,
     regenie_covar_path,
+    regenie_covar_bed_complete_path,
     regenie_gwas_samples_path,
     regenie_keep_path,
+    regenie_keep_bed_complete_path,
+    regenie_keep_iid_path,
     regenie_matched_samples_path,
     regenie_output_dir,
+    regenie_pheno_bed_complete_path,
     regenie_pheno_path,
 )
 from .sample_restriction import restrict_frame_for_gwas
@@ -96,7 +100,7 @@ def _bucket_output_root(config: ProjectConfig) -> str:
 
 
 def _rewrite_script(config: ProjectConfig, paths: ProjectPaths) -> str:
-    keep_path = _absolute(regenie_keep_path(paths))
+    keep_iid_path = _absolute(regenie_keep_iid_path(paths))
     acaf_prefix = (
         config.workbench.acaf_mt_path.replace("/splitMT/hail.mt", "/pgen").replace("/multiMT/hail.mt", "/pgen")
     )
@@ -109,7 +113,7 @@ REQUESTER_PAYS_PROJECT="${{REQUESTER_PAYS_PROJECT:-${{GCS_REQUESTER_PAYS_PROJECT
 WORKDIR="${{WORKDIR:-$PWD/gwas_work}}"
 DOWNLOAD_DIR="$WORKDIR/pgen"
 BED_DIR="$WORKDIR/bed"
-KEEP_FILE="{keep_path}"
+KEEP_FILE="{keep_iid_path}"
 ACAF_PGEN_ROOT="{acaf_prefix}"
 
 mkdir -p "$DOWNLOAD_DIR" "$BED_DIR"
@@ -139,7 +143,18 @@ for CHR in "${{CHROMS[@]}}"; do
     --memory "${{PLINK_MEMORY_MB:-24000}}" \
     --make-bed \
     --out "$BED_DIR/chr${{CHR}}_matched_biallelic"
+  "$PLINK2_BIN" \
+    --bfile "$BED_DIR/chr${{CHR}}_matched_biallelic" \
+    --set-all-var-ids '@:#:$r:$a' \
+    --new-id-max-allele-len 1000 \
+    --make-bed \
+    --out "$BED_DIR/chr${{CHR}}_matched_biallelic_uid"
   rm -f "$PREFIX".pgen "$PREFIX".pvar "$PREFIX".psam
+  rm -f \
+    "$BED_DIR/chr${{CHR}}_matched_biallelic.bed" \
+    "$BED_DIR/chr${{CHR}}_matched_biallelic.bim" \
+    "$BED_DIR/chr${{CHR}}_matched_biallelic.fam" \
+    "$BED_DIR/chr${{CHR}}_matched_biallelic.log"
 done
 """
 
@@ -165,28 +180,43 @@ fi
 
 for CHR in "${{CHROMS[@]}}"; do
   "$PLINK2_BIN" \
-    --bfile "$BED_DIR/chr${{CHR}}_matched_biallelic" \
+    --bfile "$BED_DIR/chr${{CHR}}_matched_biallelic_uid" \
     --indep-pairwise 200 50 0.2 \
     --out "$STEP1_DIR/prune_chr${{CHR}}"
   "$PLINK2_BIN" \
-    --bfile "$BED_DIR/chr${{CHR}}_matched_biallelic" \
+    --bfile "$BED_DIR/chr${{CHR}}_matched_biallelic_uid" \
     --extract "$STEP1_DIR/prune_chr${{CHR}}.prune.in" \
     --make-bed \
     --out "$STEP1_DIR/chr${{CHR}}_pruned"
 done
 
-: > "$STEP1_DIR/pruned_merge_list.txt"
-for CHR in "${{CHROMS[@]}}"; do
-  if [ "$CHR" != "1" ]; then
+if [ "${{#CHROMS[@]}}" -eq 1 ]; then
+  CHR="${{CHROMS[0]}}"
+  cp "$STEP1_DIR/chr${{CHR}}_pruned.bed" "$STEP1_DIR/acaf_step1_pruned.bed"
+  cp "$STEP1_DIR/chr${{CHR}}_pruned.bim" "$STEP1_DIR/acaf_step1_pruned.bim"
+  cp "$STEP1_DIR/chr${{CHR}}_pruned.fam" "$STEP1_DIR/acaf_step1_pruned.fam"
+else
+  ANCHOR_CHR="${{CHROMS[0]}}"
+  : > "$STEP1_DIR/pruned_merge_list.txt"
+  for CHR in "${{CHROMS[@]:1}}"; do
     echo "$STEP1_DIR/chr${{CHR}}_pruned" >> "$STEP1_DIR/pruned_merge_list.txt"
-  fi
-done
+  done
 
-"$PLINK2_BIN" \
-  --bfile "$STEP1_DIR/chr1_pruned" \
-  --pmerge-list "$STEP1_DIR/pruned_merge_list.txt" bfile \
-  --make-bed \
-  --out "$STEP1_DIR/acaf_step1_pruned"
+  "$PLINK2_BIN" \
+    --bfile "$STEP1_DIR/chr${{ANCHOR_CHR}}_pruned" \
+    --pmerge-list "$STEP1_DIR/pruned_merge_list.txt" bfile \
+    --make-bed \
+    --out "$STEP1_DIR/acaf_step1_pruned"
+fi
+
+for CHR in "${{CHROMS[@]}}"; do
+  rm -f \
+    "$STEP1_DIR/chr${{CHR}}_pruned.bed" \
+    "$STEP1_DIR/chr${{CHR}}_pruned.bim" \
+    "$STEP1_DIR/chr${{CHR}}_pruned.fam" \
+    "$STEP1_DIR/prune_chr${{CHR}}.prune.in" \
+    "$STEP1_DIR/prune_chr${{CHR}}.prune.out"
+done
 """
 
 
@@ -208,9 +238,9 @@ mkdir -p "$OUTDIR"
 "$REGENIE_BIN" \\
   --step 1 \\
   --bed "$STEP1_PREFIX" \\
-  --keep "{_absolute(regenie_keep_path(paths))}" \\
-  --covarFile "{_absolute(regenie_covar_path(paths))}" \\
-  --phenoFile "{_absolute(regenie_pheno_path(paths))}" \\
+  --keep "{_absolute(regenie_keep_bed_complete_path(paths))}" \\
+  --covarFile "{_absolute(regenie_covar_bed_complete_path(paths))}" \\
+  --phenoFile "{_absolute(regenie_pheno_bed_complete_path(paths))}" \\
   --phenoCol rhabdo_case \\
   --covarColList "{covar_list}" \\
 {cat_line}  --bt \\
@@ -236,6 +266,8 @@ OUTDIR="$WORKDIR/regenie"
 
 mkdir -p "$OUTDIR"
 
+DELETE_CHROM_AFTER_STEP2="${{DELETE_CHROM_AFTER_STEP2:-1}}"
+
 if [ "$#" -gt 0 ]; then
   CHROMS=("$@")
 else
@@ -245,11 +277,11 @@ fi
 for CHR in "${{CHROMS[@]}}"; do
   "$REGENIE_BIN" \\
     --step 2 \\
-    --bed "$BED_DIR/chr${{CHR}}_matched_biallelic" \\
+    --bed "$BED_DIR/chr${{CHR}}_matched_biallelic_uid" \\
     --chr "${{CHR}}" \\
-    --keep "{_absolute(regenie_keep_path(paths))}" \\
-    --covarFile "{_absolute(regenie_covar_path(paths))}" \\
-    --phenoFile "{_absolute(regenie_pheno_path(paths))}" \\
+    --keep "{_absolute(regenie_keep_bed_complete_path(paths))}" \\
+    --covarFile "{_absolute(regenie_covar_bed_complete_path(paths))}" \\
+    --phenoFile "{_absolute(regenie_pheno_bed_complete_path(paths))}" \\
     --phenoCol rhabdo_case \\
     --covarColList "{covar_list}" \\
 {cat_line}    --bt \\
@@ -259,6 +291,13 @@ for CHR in "${{CHROMS[@]}}"; do
     --pred "$OUTDIR/step1_pred.list" \\
     --bsize 400 \\
     --out "$OUTDIR/step2_chr${{CHR}}"
+  if [ "$DELETE_CHROM_AFTER_STEP2" = "1" ]; then
+    rm -f \
+      "$BED_DIR/chr${{CHR}}_matched_biallelic_uid.bed" \
+      "$BED_DIR/chr${{CHR}}_matched_biallelic_uid.bim" \
+      "$BED_DIR/chr${{CHR}}_matched_biallelic_uid.fam" \
+      "$BED_DIR/chr${{CHR}}_matched_biallelic_uid.log"
+  fi
 done
 """
 
@@ -313,9 +352,9 @@ PROJECT="${{PROJECT:-${{GOOGLE_PROJECT:-${{GCS_REQUESTER_PAYS_PROJECT:-YOUR_PROJ
   --project "$PROJECT" \\
   --image "$IMAGE" \\
   --logging "{bucket_root}/dsub_logs/step1" \\
-  --input KEEP_FILE="{_absolute(regenie_keep_path(paths))}" \\
-  --input PHENO_FILE="{_absolute(regenie_pheno_path(paths))}" \\
-  --input COVAR_FILE="{_absolute(regenie_covar_path(paths))}" \\
+  --input KEEP_FILE="{_absolute(regenie_keep_bed_complete_path(paths))}" \\
+  --input PHENO_FILE="{_absolute(regenie_pheno_bed_complete_path(paths))}" \\
+  --input COVAR_FILE="{_absolute(regenie_covar_bed_complete_path(paths))}" \\
   --script "{_absolute(gwas_step1_script_path(paths))}" \\
   --output-recursive OUTDIR="{bucket_root}/step1"
 """
@@ -337,9 +376,9 @@ for CHR in $(seq 1 22); do
     --project "$PROJECT" \\
     --image "$IMAGE" \\
     --logging "{bucket_root}/dsub_logs/step2/chr${{CHR}}" \\
-    --input KEEP_FILE="{_absolute(regenie_keep_path(paths))}" \\
-    --input PHENO_FILE="{_absolute(regenie_pheno_path(paths))}" \\
-    --input COVAR_FILE="{_absolute(regenie_covar_path(paths))}" \\
+    --input KEEP_FILE="{_absolute(regenie_keep_bed_complete_path(paths))}" \\
+    --input PHENO_FILE="{_absolute(regenie_pheno_bed_complete_path(paths))}" \\
+    --input COVAR_FILE="{_absolute(regenie_covar_bed_complete_path(paths))}" \\
     --input STEP1_PRED="{bucket_root}/step1/step1_pred.list" \\
     --script "{_absolute(gwas_step2_script_path(paths))}" \\
     --env CHR="${{CHR}}" \\
@@ -363,8 +402,12 @@ This workspace is designed for a fresh Verily JupyterLab Spark cluster terminal.
 - Matched sample manifest: `{regenie_matched_samples_path(paths)}`
 - GWAS analysis sample manifest: `{regenie_gwas_samples_path(paths)}`
 - REGENIE keep file: `{regenie_keep_path(paths)}`
+- AoU IID-only keep file for PLINK2: `{regenie_keep_iid_path(paths)}`
 - REGENIE phenotype file: `{regenie_pheno_path(paths)}`
 - REGENIE covariate file: `{regenie_covar_path(paths)}`
+- Complete-case BED-side keep file: `{regenie_keep_bed_complete_path(paths)}`
+- Complete-case BED-side phenotype file: `{regenie_pheno_bed_complete_path(paths)}`
+- Complete-case BED-side covariate file: `{regenie_covar_bed_complete_path(paths)}`
 
 ## Run order
 
@@ -384,7 +427,8 @@ This workspace is designed for a fresh Verily JupyterLab Spark cluster terminal.
 ## Notes
 
 - Genotype handling is chromosome-scoped and ephemeral by design.
-- The local terminal workflow uses PLINK2 to rewrite AoU ACAF PGEN inputs into matched, common, biallelic BED files before REGENIE.
+- The local terminal workflow uses PLINK2 to rewrite AoU ACAF PGEN inputs into matched, common, biallelic BED files with unique variant IDs before REGENIE.
+- The rewrite step deletes localized `pgen/pvar/psam` files after each chromosome rewrite, and Step 2 deletes each chromosome BED after association testing completes unless `DELETE_CHROM_AFTER_STEP2=0`.
 - The dsub templates target `us-central1` and write outputs under `{_bucket_output_root(config)}`.
 - The legacy single-file REGENIE template remains at `{regenie_commands_path(paths)}`.
 """

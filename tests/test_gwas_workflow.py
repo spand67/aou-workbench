@@ -60,12 +60,22 @@ class GwasWorkflowPreparationTests(unittest.TestCase):
         self.assertNotIn("12", set(restricted["IID"].astype(str)))
 
         rewrite_script = Path(outputs["rewrite_script"]).read_text(encoding="utf-8")
+        prune_script = Path(outputs["prune_script"]).read_text(encoding="utf-8")
+        step1_script = Path(outputs["step1_script"]).read_text(encoding="utf-8")
         step2_script = Path(outputs["step2_script"]).read_text(encoding="utf-8")
         dsub_step2 = Path(outputs["dsub_step2"]).read_text(encoding="utf-8")
 
         self.assertIn("--max-alleles 2", rewrite_script)
         self.assertIn("--maf 0.01", rewrite_script)
+        self.assertIn("keep_iid.txt", rewrite_script)
+        self.assertIn("--set-all-var-ids '@:#:$r:$a'", rewrite_script)
+        self.assertIn("matched_biallelic_uid", prune_script)
+        self.assertIn("cp \"$STEP1_DIR/chr${CHR}_pruned.bed\"", prune_script)
+        self.assertIn("keep_bed_complete.tsv", step1_script)
         self.assertIn("--pred \"$OUTDIR/step1_pred.list\"", step2_script)
+        self.assertIn("covariates_bed_complete.tsv", step2_script)
+        self.assertIn("DELETE_CHROM_AFTER_STEP2", step2_script)
+        self.assertIn("matched_biallelic_uid", step2_script)
         self.assertIn("us-central1", dsub_step2)
         self.assertIn("gs://unit-test-bucket", dsub_step2)
 

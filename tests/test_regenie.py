@@ -25,6 +25,9 @@ class RegeniePreparationTests(unittest.TestCase):
         )
         cohort_df = build_rhabdo_cohort(config)
         matched_df = match_case_controls(cohort_df, config)
+        matched_df = matched_df.copy()
+        matched_df.loc[matched_df.index[0], "pc1"] = None
+        matched_df.loc[matched_df.index[0], "ancestry_pred"] = ""
         output_paths = build_output_paths(config)
 
         outputs = prepare_regenie_inputs(config, matched_df, output_paths)
@@ -38,18 +41,26 @@ class RegeniePreparationTests(unittest.TestCase):
         pheno = pd.read_csv(outputs["phenotypes"], sep="\t")
         covar = pd.read_csv(outputs["covariates"], sep="\t")
         covar_numeric = pd.read_csv(outputs["covariates_numeric"], sep="\t")
+        keep_iid = pd.read_csv(outputs["keep_iid"], sep="\t")
+        keep_bed_complete = pd.read_csv(outputs["keep_bed_complete"], sep="\t")
+        covar_bed_complete = pd.read_csv(outputs["covariates_bed_complete"], sep="\t")
         commands = Path(outputs["commands"]).read_text(encoding="utf-8")
 
         self.assertGreaterEqual(len(matched_manifest), len(gwas_manifest))
         self.assertIn("FID", keep.columns)
+        self.assertListEqual(list(keep_iid.columns), ["IID"])
         self.assertIn("IID", pheno.columns)
         self.assertIn("rhabdo_case", pheno.columns)
         self.assertIn("ancestry_pred", covar.columns)
         self.assertNotIn("ancestry_pred", covar_numeric.columns)
+        self.assertLess(len(keep_bed_complete), len(keep))
+        self.assertTrue((keep_bed_complete["FID"].astype(str) == "0").all())
+        self.assertFalse(covar_bed_complete.isna().any().any())
         self.assertIn("--step 1", commands)
         self.assertIn("--step 2", commands)
         self.assertIn("--catCovarList \"ancestry_pred\"", commands)
         self.assertIn("STEP2_BED_PREFIX_TEMPLATE", commands)
+        self.assertIn("matched_biallelic_uid", commands)
         self.assertIn("--bed", commands)
 
 

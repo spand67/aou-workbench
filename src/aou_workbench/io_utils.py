@@ -105,14 +105,14 @@ def read_table(path: str) -> pd.DataFrame:
     if path.startswith("gs://"):
         resolved = _resolve_gcs_path(path)
         suffix = resolved.lower()
-        if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz"):
+        if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz") or suffix.endswith(".txt"):
             return pd.read_csv(io.StringIO(_gsutil_cat(resolved)), sep="\t")
         if suffix.endswith(".csv") or suffix.endswith(".csv.gz"):
             return pd.read_csv(io.StringIO(_gsutil_cat(resolved)))
         raise ValueError(f"Unsupported remote table format: {resolved}")
     if suffix.endswith(".parquet"):
         return pd.read_parquet(path)
-    if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz"):
+    if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz") or suffix.endswith(".txt"):
         return pd.read_csv(path, sep="\t")
     if suffix.endswith(".csv") or suffix.endswith(".csv.gz"):
         return pd.read_csv(path)
@@ -125,7 +125,7 @@ def write_dataframe(df: pd.DataFrame, path: str) -> None:
     if suffix.endswith(".parquet"):
         df.to_parquet(path, index=False)
         return
-    if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz"):
+    if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz") or suffix.endswith(".txt"):
         df.to_csv(path, sep="\t", index=False)
         return
     if suffix.endswith(".csv") or suffix.endswith(".csv.gz"):

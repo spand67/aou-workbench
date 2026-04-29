@@ -26,6 +26,10 @@ def regenie_keep_path(paths: ProjectPaths) -> str:
     return join_path(regenie_output_dir(paths), "keep.tsv")
 
 
+def regenie_keep_iid_path(paths: ProjectPaths) -> str:
+    return join_path(regenie_output_dir(paths), "keep_iid.txt")
+
+
 def regenie_pheno_path(paths: ProjectPaths) -> str:
     return join_path(regenie_output_dir(paths), "phenotypes.tsv")
 
@@ -36,6 +40,30 @@ def regenie_covar_path(paths: ProjectPaths) -> str:
 
 def regenie_numeric_covar_path(paths: ProjectPaths) -> str:
     return join_path(regenie_output_dir(paths), "covariates_numeric.tsv")
+
+
+def regenie_keep_bed_path(paths: ProjectPaths) -> str:
+    return join_path(regenie_output_dir(paths), "keep_bed.tsv")
+
+
+def regenie_pheno_bed_path(paths: ProjectPaths) -> str:
+    return join_path(regenie_output_dir(paths), "phenotypes_bed.tsv")
+
+
+def regenie_covar_bed_path(paths: ProjectPaths) -> str:
+    return join_path(regenie_output_dir(paths), "covariates_bed.tsv")
+
+
+def regenie_keep_bed_complete_path(paths: ProjectPaths) -> str:
+    return join_path(regenie_output_dir(paths), "keep_bed_complete.tsv")
+
+
+def regenie_pheno_bed_complete_path(paths: ProjectPaths) -> str:
+    return join_path(regenie_output_dir(paths), "phenotypes_bed_complete.tsv")
+
+
+def regenie_covar_bed_complete_path(paths: ProjectPaths) -> str:
+    return join_path(regenie_output_dir(paths), "covariates_bed_complete.tsv")
 
 
 def regenie_commands_path(paths: ProjectPaths) -> str:
@@ -59,6 +87,11 @@ def _sample_manifest(sample_df: pd.DataFrame) -> pd.DataFrame:
 
 def _keep_file(sample_df: pd.DataFrame) -> pd.DataFrame:
     return _sample_manifest(sample_df)
+
+
+def _keep_iid_file(sample_df: pd.DataFrame) -> pd.DataFrame:
+    keep = _keep_file(sample_df)
+    return keep[["IID"]].copy()
 
 
 def _phenotype_file(sample_df: pd.DataFrame, outcome_column: str) -> pd.DataFrame:
@@ -90,10 +123,44 @@ def _numeric_covariate_file(sample_df: pd.DataFrame, covariates: list[str]) -> p
     return covar
 
 
+def _bed_id_frame(df: pd.DataFrame) -> pd.DataFrame:
+    bed = df.copy()
+    bed["FID"] = "0"
+    bed["IID"] = bed["IID"].astype(str)
+    columns = [column for column in df.columns if column not in {"FID", "IID"}]
+    return bed[["FID", "IID", *columns]]
+
+
+def _complete_case_frames(
+    keep_bed: pd.DataFrame,
+    pheno_bed: pd.DataFrame,
+    covar_bed: pd.DataFrame,
+    covariate_columns: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    df = keep_bed.merge(pheno_bed, on=["FID", "IID"], how="inner")
+    df = df.merge(covar_bed, on=["FID", "IID"], how="inner")
+
+    numeric_columns = ["rhabdo_case", *[column for column in covariate_columns if column != "ancestry_pred"]]
+    for column in numeric_columns:
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+    if "ancestry_pred" in df.columns:
+        df["ancestry_pred"] = df["ancestry_pred"].replace("", pd.NA)
+
+    needed = ["FID", "IID", "rhabdo_case", *[column for column in covariate_columns if column in df.columns]]
+    complete = df.dropna(subset=needed).copy()
+
+    keep_complete = complete[["FID", "IID"]].drop_duplicates().reset_index(drop=True)
+    pheno_complete = complete[["FID", "IID", "rhabdo_case"]].drop_duplicates().reset_index(drop=True)
+    covar_columns = ["FID", "IID", *[column for column in covariate_columns if column in complete.columns]]
+    covar_complete = complete[covar_columns].drop_duplicates().reset_index(drop=True)
+    return keep_complete, pheno_complete, covar_complete
+
+
 def _command_template(paths: ProjectPaths, config: ProjectConfig) -> str:
-    keep_path = regenie_keep_path(paths)
-    pheno_path = regenie_pheno_path(paths)
-    covar_path = regenie_covar_path(paths)
+    keep_path = regenie_keep_bed_complete_path(paths)
+    pheno_path = regenie_pheno_bed_complete_path(paths)
+    covar_path = regenie_covar_bed_complete_path(paths)
     covariate_columns = _covariate_columns(config)
     cat_covars = [column for column in covariate_columns if column == "ancestry_pred"]
     covar_list = ",".join(covariate_columns) if covariate_columns else ""
@@ -105,7 +172,7 @@ set -euo pipefail
 
 REGENIE_BIN="${{REGENIE_BIN:-regenie}}"
 STEP1_BED_PREFIX="${{STEP1_BED_PREFIX:-/path/to/acaf_step1_pruned}}"
-STEP2_BED_PREFIX_TEMPLATE="${{STEP2_BED_PREFIX_TEMPLATE:-/path/to/chr{{CHR}}_matched_biallelic}}"
+STEP2_BED_PREFIX_TEMPLATE="${{STEP2_BED_PREFIX_TEMPLATE:-/path/to/chr{{CHR}}_matched_biallelic_uid}}"
 OUTDIR="{regenie_output_dir(paths)}"
 
 mkdir -p "$OUTDIR"
@@ -157,35 +224,66 @@ def prepare_regenie_inputs(
     sample_df = _regenie_sample_frame(restricted)
     full_matched_manifest = _sample_manifest(_regenie_sample_frame(matched_df))
     keep = _keep_file(sample_df)
+    keep_iid = _keep_iid_file(sample_df)
     pheno = _phenotype_file(sample_df, config.analysis.matched_outcome_column)
     covariate_columns = _covariate_columns(config)
     covar = _covariate_file(sample_df, covariate_columns)
     numeric_covar = _numeric_covariate_file(sample_df, covariate_columns)
+    keep_bed = _bed_id_frame(keep)
+    pheno_bed = _bed_id_frame(pheno)
+    covar_bed = _bed_id_frame(covar)
+    keep_bed_complete, pheno_bed_complete, covar_bed_complete = _complete_case_frames(
+        keep_bed,
+        pheno_bed,
+        covar_bed,
+        covariate_columns,
+    )
 
     matched_samples_path = regenie_matched_samples_path(paths)
     gwas_samples_path = regenie_gwas_samples_path(paths)
     keep_path = regenie_keep_path(paths)
+    keep_iid_path = regenie_keep_iid_path(paths)
     pheno_path = regenie_pheno_path(paths)
     covar_path = regenie_covar_path(paths)
     numeric_covar_path = regenie_numeric_covar_path(paths)
+    keep_bed_path = regenie_keep_bed_path(paths)
+    pheno_bed_path = regenie_pheno_bed_path(paths)
+    covar_bed_path = regenie_covar_bed_path(paths)
+    keep_bed_complete_path = regenie_keep_bed_complete_path(paths)
+    pheno_bed_complete_path = regenie_pheno_bed_complete_path(paths)
+    covar_bed_complete_path = regenie_covar_bed_complete_path(paths)
     commands_path = regenie_commands_path(paths)
 
     ensure_parent_dir(keep_path)
     write_dataframe(full_matched_manifest, matched_samples_path)
     write_dataframe(keep, gwas_samples_path)
     write_dataframe(keep, keep_path)
+    write_dataframe(keep_iid, keep_iid_path)
     write_dataframe(pheno, pheno_path)
     write_dataframe(covar, covar_path)
     write_dataframe(numeric_covar, numeric_covar_path)
+    write_dataframe(keep_bed, keep_bed_path)
+    write_dataframe(pheno_bed, pheno_bed_path)
+    write_dataframe(covar_bed, covar_bed_path)
+    write_dataframe(keep_bed_complete, keep_bed_complete_path)
+    write_dataframe(pheno_bed_complete, pheno_bed_complete_path)
+    write_dataframe(covar_bed_complete, covar_bed_complete_path)
     write_text(_command_template(paths, config), commands_path)
 
     return {
         "matched_samples": matched_samples_path,
         "gwas_samples": gwas_samples_path,
         "keep": keep_path,
+        "keep_iid": keep_iid_path,
         "phenotypes": pheno_path,
         "covariates": covar_path,
         "covariates_numeric": numeric_covar_path,
+        "keep_bed": keep_bed_path,
+        "phenotypes_bed": pheno_bed_path,
+        "covariates_bed": covar_bed_path,
+        "keep_bed_complete": keep_bed_complete_path,
+        "phenotypes_bed_complete": pheno_bed_complete_path,
+        "covariates_bed_complete": covar_bed_complete_path,
         "commands": commands_path,
     }
 
@@ -194,10 +292,17 @@ __all__ = [
     "prepare_regenie_inputs",
     "regenie_commands_path",
     "regenie_covar_path",
+    "regenie_covar_bed_complete_path",
+    "regenie_covar_bed_path",
     "regenie_gwas_samples_path",
     "regenie_keep_path",
+    "regenie_keep_bed_complete_path",
+    "regenie_keep_bed_path",
+    "regenie_keep_iid_path",
     "regenie_matched_samples_path",
     "regenie_numeric_covar_path",
     "regenie_output_dir",
+    "regenie_pheno_bed_complete_path",
+    "regenie_pheno_bed_path",
     "regenie_pheno_path",
 ]
