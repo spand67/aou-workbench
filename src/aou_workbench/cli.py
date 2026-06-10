@@ -64,12 +64,20 @@ from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_prepare import prepare_stage2_variant_table
 from .stage2_plp_panel import run_stage2_plp_panel
 from .stage4_hail_gwas import (
+    hail_pilot_lead_hits_path,
+    hail_pilot_manhattan_path,
+    hail_pilot_qc_path,
+    hail_pilot_qq_path,
+    hail_pilot_report_path,
+    hail_pilot_results_path,
+    hail_pilot_variant_qc_summary_path,
     hail_stage4_full_results_path,
     hail_stage4_lead_hits_path,
     hail_stage4_manhattan_path,
     hail_stage4_qc_path,
     hail_stage4_qq_path,
     hail_stage4_report_path,
+    run_stage4_hail_pilot_gwas,
     run_stage4_hail_gwas,
 )
 from .stage4_prepare import prepare_stage4_acaf_subset
@@ -167,6 +175,56 @@ def _build_parser() -> argparse.ArgumentParser:
         "--chromosomes",
         default="1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22",
         help="Comma-separated chromosome list, e.g. '1,19,22'.",
+    )
+
+    hail_pilot_parser = subparsers.add_parser(
+        "run-hail-pilot-gwas",
+        help="Run a reduced-marker Hail-native GWAS pilot with train-only sample filtering and strict variant QC.",
+    )
+    _add_config_arguments(hail_pilot_parser)
+    hail_pilot_parser.add_argument(
+        "--chromosomes",
+        default="22",
+        help="Comma-separated autosome list. Default: 22.",
+    )
+    hail_pilot_parser.add_argument(
+        "--min-maf",
+        type=float,
+        default=0.05,
+        help="Minimum analysis-sample minor allele frequency. Default: 0.05.",
+    )
+    hail_pilot_parser.add_argument(
+        "--min-mac",
+        type=int,
+        default=20,
+        help="Minimum analysis-sample minor allele count. Default: 20.",
+    )
+    hail_pilot_parser.add_argument(
+        "--min-call-rate",
+        type=float,
+        default=0.98,
+        help="Minimum analysis-sample variant call rate. Default: 0.98.",
+    )
+    hail_pilot_parser.add_argument(
+        "--hwe-p-control",
+        type=float,
+        default=1e-6,
+        help="Minimum Hardy-Weinberg equilibrium p-value among controls. Default: 1e-6.",
+    )
+    hail_pilot_parser.add_argument(
+        "--analysis-split",
+        default="train",
+        help="Matched cohort analysis_split to use. Default: train.",
+    )
+    hail_pilot_parser.add_argument(
+        "--eligibility-flag",
+        default="primary_model_eligible",
+        help="Eligibility flag in matched cohort/clinical model input. Default: primary_model_eligible.",
+    )
+    hail_pilot_parser.add_argument(
+        "--label",
+        default="acaf_chr22_maf05_train_qc",
+        help="Output label under stage4/hail_pilot/. Default: acaf_chr22_maf05_train_qc.",
     )
 
     for name in ("run-stage1", "run-stage2", "run-stage3", "run-stage4", "run-all"):
@@ -315,6 +373,37 @@ def main(argv: list[str] | None = None) -> int:
         print(f"report: {hail_stage4_report_path(paths)}")
         print(f"manhattan: {hail_stage4_manhattan_path(paths)}")
         print(f"qq: {hail_stage4_qq_path(paths)}")
+        return 0
+
+    if args.command == "run-hail-pilot-gwas":
+        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
+        if not os.path.exists(clinical_model_input_path(paths)):
+            _, _, matched_df = _load_or_build_matched_artifacts(config)
+            characterize_case_control_cohort(effective, cohort_df, matched_df, paths)
+        matched_df = read_table(clinical_model_input_path(paths))
+        chromosomes = [value.strip() for value in args.chromosomes.split(",") if value.strip()]
+        full, hits = run_stage4_hail_pilot_gwas(
+            effective,
+            matched_df,
+            paths,
+            chromosomes=chromosomes,
+            min_maf=args.min_maf,
+            min_mac=args.min_mac,
+            min_call_rate=args.min_call_rate,
+            hwe_p_control=args.hwe_p_control,
+            analysis_split=args.analysis_split,
+            eligibility_flag=args.eligibility_flag,
+            label=args.label,
+        )
+        print(f"Hail pilot GWAS variants tested: {full.shape[0]}")
+        print(f"Hail pilot GWAS lead hits: {hits.shape[0]}")
+        print(f"results: {hail_pilot_results_path(paths, args.label)}")
+        print(f"lead_hits: {hail_pilot_lead_hits_path(paths, args.label)}")
+        print(f"qc: {hail_pilot_qc_path(paths, args.label)}")
+        print(f"variant_qc_summary: {hail_pilot_variant_qc_summary_path(paths, args.label)}")
+        print(f"report: {hail_pilot_report_path(paths, args.label)}")
+        print(f"manhattan: {hail_pilot_manhattan_path(paths, args.label)}")
+        print(f"qq: {hail_pilot_qq_path(paths, args.label)}")
         return 0
 
     if args.command == "run-all":

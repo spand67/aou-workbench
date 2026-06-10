@@ -81,6 +81,22 @@ aou-workbench run-clinical-model
 
 This trains an L2-regularized logistic model on the primary non-traumatic training set and evaluates it once on the held-out test set. The model uses baseline and pre-index predictors only: age, observation depth, condition-record depth, sex category, ancestry category, pre-index sepsis, and pre-index renal injury. Metrics, coefficients, predictions, calibration, ROC, and precision-recall outputs are written under `clinical/model/`.
 
+Run the first reduced-marker Hail GWAS pilot:
+
+```bash
+aou-workbench run-hail-pilot-gwas \
+  --chromosomes 22 \
+  --min-maf 0.05 \
+  --min-mac 20 \
+  --min-call-rate 0.98 \
+  --hwe-p-control 1e-6 \
+  --analysis-split train \
+  --eligibility-flag primary_model_eligible \
+  --label acaf_chr22_maf05_train_qc
+```
+
+This uses the AoU ACAF threshold split MatrixTable, not the full variant database. It restricts to the training split and primary model-eligible rows, then computes variant QC inside that analysis sample before association testing. The pilot keeps autosomal biallelic SNPs with MAF >= 0.05, minor allele count >= 20, call rate >= 0.98, and control-only Hardy-Weinberg equilibrium p >= 1e-6. Outputs are isolated under `stage4/hail_pilot/<label>/` and include GWAS results, lead hits, QC JSON, sequential variant QC counts, Manhattan and QQ plots, and a markdown report.
+
 Rebuild the cross-analysis dashboard and Markdown digest from existing outputs without rerunning queries or models:
 
 ```bash
