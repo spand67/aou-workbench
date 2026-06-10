@@ -7,7 +7,20 @@ import os
 import sys
 
 from .config import load_project_config
-from .cohort_summary import cohort_summary_report_path, cohort_summary_table_path, summarize_clinical_demographics
+from .cohort import apply_time_anchored_clinical_cofactors
+from .cohort_summary import (
+    characterize_case_control_cohort,
+    clinical_characterization_report_path,
+    cohort_summary_report_path,
+    cohort_summary_table_path,
+    consort_counts_report_path,
+    consort_counts_path,
+    critical_illness_summary_report_path,
+    critical_illness_summary_path,
+    matched_table1_report_path,
+    matched_table1_path,
+    summarize_clinical_demographics,
+)
 from .gwas_workflow import prepare_terminal_gwas_workspace
 from .io_utils import read_table
 from .paths import build_output_paths, project_path
@@ -63,6 +76,7 @@ def _load_or_build_matched_artifacts(config):
     paths = build_output_paths(effective)
     if os.path.exists(paths.matched_cohort_tsv):
         matched_df = read_table(paths.matched_cohort_tsv)
+        matched_df = apply_time_anchored_clinical_cofactors(effective, matched_df)
         return effective, paths, matched_df
     return match_controls_artifacts(config)
 
@@ -144,6 +158,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write a clinical/demographic comparison table for the WGS-restricted unmatched and matched analyses.",
     )
     _add_config_arguments(summary_parser)
+
+    characterize_parser = subparsers.add_parser(
+        "characterize-cohort",
+        help="Write CONSORT counts, matched Table 1, and sepsis/renal injury timing summaries.",
+    )
+    _add_config_arguments(characterize_parser)
 
     preindex_parser = subparsers.add_parser(
         "profile-preindex-cases",
@@ -299,6 +319,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Cohort summary rows: {frame.shape[0]}")
         print(cohort_summary_table_path(paths))
         print(cohort_summary_report_path(paths))
+        return 0
+
+    if args.command == "characterize-cohort":
+        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
+        _, _, matched_df = _load_or_build_matched_artifacts(config)
+        outputs = characterize_case_control_cohort(effective, cohort_df, matched_df, paths)
+        print(f"CONSORT rows: {outputs['consort'].shape[0]}")
+        print(f"Table 1 rows: {outputs['table1'].shape[0]}")
+        print(f"Critical illness rows: {outputs['critical_illness'].shape[0]}")
+        print(f"consort: {consort_counts_path(paths)}")
+        print(f"consort_report: {consort_counts_report_path(paths)}")
+        print(f"table1: {matched_table1_path(paths)}")
+        print(f"table1_report: {matched_table1_report_path(paths)}")
+        print(f"critical_illness: {critical_illness_summary_path(paths)}")
+        print(f"critical_illness_report: {critical_illness_summary_report_path(paths)}")
+        print(f"report: {clinical_characterization_report_path(paths)}")
         return 0
 
     if args.command == "profile-preindex-cases":

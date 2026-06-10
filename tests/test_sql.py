@@ -3,7 +3,12 @@ from __future__ import annotations
 import unittest
 
 from aou_workbench.config import load_project_config
-from aou_workbench.phenotype_sql import _empty_result_sql, render_case_tier_sql, render_covariate_sql
+from aou_workbench.phenotype_sql import (
+    _empty_result_sql,
+    render_case_tier_sql,
+    render_clinical_cofactor_events_sql,
+    render_covariate_sql,
+)
 from tests.support import build_demo_project_tree
 
 
@@ -26,6 +31,10 @@ class SqlRenderingTests(unittest.TestCase):
         self.assertIn("omop_condition_record_dates", covariate_sql)
         self.assertIn("condition_source_concept_id", covariate_sql)
         self.assertIn("eligible_ehr_denominator", covariate_sql)
+        cofactor_sql = render_clinical_cofactor_events_sql(config)
+        self.assertIn("'sepsis' AS cofactor", cofactor_sql)
+        self.assertIn("DATE(co.condition_start_date) AS condition_date", cofactor_sql)
+        self.assertIn("UNION ALL", cofactor_sql)
 
     def test_empty_result_sql_is_valid_for_condition_only_tiers(self) -> None:
         sql = _empty_result_sql(columns=("CAST(NULL AS STRING) AS person_id",))

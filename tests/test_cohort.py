@@ -5,7 +5,7 @@ import unittest
 
 import pandas as pd
 
-from aou_workbench.cohort import build_rhabdo_cohort, cohort_qc_summary
+from aou_workbench.cohort import apply_time_anchored_clinical_cofactors, build_rhabdo_cohort, cohort_qc_summary
 from aou_workbench.config import load_project_config
 from tests.support import build_demo_project_tree
 
@@ -65,6 +65,41 @@ class CohortPhenotypeDefinitionTests(unittest.TestCase):
         self.assertEqual(cohort.loc["4", "case_tier"], "excluded_denominator")
         self.assertEqual(int(cohort.loc["4", "omop_condition_record_dates"]), 1)
         self.assertFalse(bool(cohort.loc["4", "eligible_ehr_denominator"]))
+
+    def test_time_anchored_cofactors_split_preindex_and_periindex_events(self) -> None:
+        _, config = self._config()
+        cohort = build_rhabdo_cohort(config).set_index("person_id")
+
+        self.assertEqual(int(cohort.loc["1", "sepsis"]), 1)
+        self.assertEqual(int(cohort.loc["1", "periindex_sepsis"]), 1)
+        self.assertEqual(int(cohort.loc["1", "preindex_sepsis"]), 0)
+        self.assertEqual(int(cohort.loc["2", "renal_injury"]), 1)
+        self.assertEqual(int(cohort.loc["2", "periindex_renal_injury"]), 1)
+        self.assertEqual(int(cohort.loc["2", "preindex_renal_injury"]), 0)
+        self.assertEqual(int(cohort.loc["3", "preindex_sepsis"]), 1)
+        self.assertEqual(int(cohort.loc["3", "preindex_renal_injury"]), 1)
+
+    def test_matched_controls_are_time_anchored_to_inherited_case_index_date(self) -> None:
+        _, config = self._config()
+        matched = pd.DataFrame(
+            [
+                {"person_id": "5", "index_date": "2022-01-10", "analysis_case": 0},
+                {"person_id": "5", "index_date": "2021-01-01", "analysis_case": 0},
+            ]
+        )
+        events = pd.DataFrame(
+            [
+                {"person_id": "5", "cofactor": "sepsis", "condition_date": "2022-01-11"},
+                {"person_id": "5", "cofactor": "renal_injury", "condition_date": "2020-06-01"},
+            ]
+        )
+
+        anchored = apply_time_anchored_clinical_cofactors(config, matched, events)
+
+        self.assertEqual(int(anchored.loc[0, "periindex_sepsis"]), 1)
+        self.assertEqual(int(anchored.loc[0, "preindex_renal_injury"]), 1)
+        self.assertEqual(int(anchored.loc[1, "postindex_sepsis"]), 1)
+        self.assertEqual(int(anchored.loc[1, "preindex_renal_injury"]), 1)
 
     def test_legacy_probable_config_maps_to_broad(self) -> None:
         paths, _ = self._config()

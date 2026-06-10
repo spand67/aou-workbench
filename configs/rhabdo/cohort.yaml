@@ -15,8 +15,8 @@ covariate_columns:
   - pc3
   - pc4
   - pc5
-  - crush_injury
-  - renal_injury
-  - sepsis
+  - preindex_crush_injury
+  - preindex_renal_injury
+  - preindex_sepsis
 require_complete_matches: false
 allow_reuse_controls: false

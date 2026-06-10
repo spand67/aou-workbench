@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
-from scipy.stats import chi2_contingency, fisher_exact, ttest_ind
+from scipy.stats import chi2_contingency, fisher_exact, t, ttest_ind
 
 from .config import ProjectConfig
 from .io_utils import write_dataframe, write_text
@@ -20,6 +20,34 @@ def cohort_summary_table_path(paths: ProjectPaths) -> str:
 
 def cohort_summary_report_path(paths: ProjectPaths) -> str:
     return join_path(paths.run_root, "cohort", "clinical_demographic_summary.md")
+
+
+def consort_counts_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "consort_counts.tsv")
+
+
+def consort_counts_report_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "consort_counts.md")
+
+
+def matched_table1_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "table1_clinical_matched.tsv")
+
+
+def matched_table1_report_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "table1_clinical_matched.md")
+
+
+def critical_illness_summary_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "critical_illness_summary.tsv")
+
+
+def critical_illness_summary_report_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "critical_illness_summary.md")
+
+
+def clinical_characterization_report_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "clinical_characterization_report.md")
 
 
 _UNMATCHED_CASES = "unmatched_rhabdo_wgs"
@@ -101,6 +129,20 @@ def _format_smd(value: float) -> str:
     return f"{value:.3f}"
 
 
+def _format_effect(value: float) -> str:
+    if pd.isna(value):
+        return _empty_value()
+    if abs(value) >= 100 or (abs(value) < 0.01 and value != 0):
+        return f"{value:.2e}"
+    return f"{value:.3f}"
+
+
+def _format_ci(low: float, high: float) -> str:
+    if pd.isna(low) or pd.isna(high):
+        return _empty_value()
+    return f"{_format_effect(low)}, {_format_effect(high)}"
+
+
 def _continuous_smd(left: pd.Series, right: pd.Series) -> float:
     if left.empty or right.empty:
         return np.nan
@@ -145,6 +187,25 @@ def _continuous_p_value(left: pd.Series, right: pd.Series) -> float:
     return float(ttest_ind(left, right, equal_var=False, nan_policy="omit").pvalue)
 
 
+def _mean_difference_ci(left: pd.Series, right: pd.Series) -> tuple[float, float, float]:
+    if len(left) < 2 or len(right) < 2:
+        return np.nan, np.nan, np.nan
+    diff = float(left.mean() - right.mean())
+    left_var = float(left.var(ddof=1))
+    right_var = float(right.var(ddof=1))
+    se_sq = left_var / len(left) + right_var / len(right)
+    if se_sq <= 0:
+        return diff, diff, diff
+    se = float(np.sqrt(se_sq))
+    numerator = se_sq**2
+    denominator = ((left_var / len(left)) ** 2 / (len(left) - 1)) + ((right_var / len(right)) ** 2 / (len(right) - 1))
+    df = numerator / denominator if denominator > 0 else min(len(left), len(right)) - 1
+    critical = float(t.ppf(0.975, df)) if df > 0 else np.nan
+    if pd.isna(critical):
+        return diff, np.nan, np.nan
+    return diff, diff - critical * se, diff + critical * se
+
+
 def _binary_p_value(left: pd.Series, right: pd.Series) -> float:
     if left.empty or right.empty:
         return np.nan
@@ -159,6 +220,27 @@ def _binary_p_value(left: pd.Series, right: pd.Series) -> float:
     if (table < 5).any():
         return float(fisher_exact(table)[1])
     return float(chi2_contingency(table, correction=False)[1])
+
+
+def _odds_ratio_ci(left: pd.Series, right: pd.Series) -> tuple[float, float, float]:
+    if left.empty or right.empty:
+        return np.nan, np.nan, np.nan
+    a = float(left.sum())
+    b = float(len(left) - left.sum())
+    c = float(right.sum())
+    d = float(len(right) - right.sum())
+    if min(a, b, c, d) == 0:
+        a += 0.5
+        b += 0.5
+        c += 0.5
+        d += 0.5
+    odds_ratio = (a * d) / (b * c) if b * c else np.nan
+    if pd.isna(odds_ratio) or odds_ratio <= 0:
+        return odds_ratio, np.nan, np.nan
+    se = np.sqrt((1 / a) + (1 / b) + (1 / c) + (1 / d))
+    low = float(np.exp(np.log(odds_ratio) - 1.96 * se))
+    high = float(np.exp(np.log(odds_ratio) + 1.96 * se))
+    return float(odds_ratio), low, high
 
 
 def _categorical_p_value(left: pd.Series, right: pd.Series, categories: list[str]) -> float:
@@ -204,6 +286,234 @@ def _render_markdown(summary_df: pd.DataFrame, *, has_max_unrelated: bool) -> st
         ]
     )
     return "\n".join(notes)
+
+
+def _markdown_table(df: pd.DataFrame) -> str:
+    try:
+        return df.to_markdown(index=False)
+    except ImportError:
+        return df.to_string(index=False)
+
+
+def _write_markdown_table(df: pd.DataFrame, path: str, title: str) -> None:
+    write_text(f"# {title}\n\n{_markdown_table(df)}\n", path)
+
+
+def build_consort_counts(built_df: pd.DataFrame, matched_df: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            ("Built cohort rows", len(built_df)),
+            (">=2 OMOP condition dates", int(built_df.get("eligible_ehr_denominator", pd.Series(dtype=int)).sum())),
+            ("Broad rhabdo cases", int(built_df.get("broad_rhabdo_case", pd.Series(dtype=int)).sum())),
+            ("Definite rhabdo cases", int(built_df.get("definite_rhabdo_case", pd.Series(dtype=int)).sum())),
+            ("CK >5000 without rhabdo, excluded", int((built_df.get("case_tier", pd.Series(dtype=str)) == "indeterminate_ck_only").sum())),
+            ("Eligible controls", int(built_df.get("eligible_control", pd.Series(dtype=int)).sum())),
+            ("Matched analytic rows", len(matched_df)),
+            ("Matched cases", int((matched_df.get("analysis_case", pd.Series(dtype=int)) == 1).sum())),
+            ("Matched controls", int((matched_df.get("analysis_case", pd.Series(dtype=int)) == 0).sum())),
+        ],
+        columns=["step", "n"],
+    )
+
+
+def _matched_groups(config: ProjectConfig, matched_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    outcome = config.analysis.matched_outcome_column
+    cases = matched_df[matched_df[outcome].fillna(0).astype(int) == 1].copy()
+    controls = matched_df[matched_df[outcome].fillna(0).astype(int) == 0].copy()
+    return cases, controls
+
+
+def build_matched_table1(config: ProjectConfig, matched_df: pd.DataFrame) -> pd.DataFrame:
+    cases, controls = _matched_groups(config, matched_df)
+    rows: list[dict[str, object]] = [
+        {
+            "section": "Sample size",
+            "variable": "N",
+            "matched_cases": _format_count(cases),
+            "matched_controls": _format_count(controls),
+            "effect_measure": "",
+            "effect_size": "",
+            "ci_95": "",
+            "smd": "",
+            "p_value": "",
+        }
+    ]
+
+    def add_continuous(section: str, label: str, column: str) -> None:
+        if column not in matched_df.columns:
+            return
+        left = _numeric_series(cases, column)
+        right = _numeric_series(controls, column)
+        effect, low, high = _mean_difference_ci(left, right)
+        rows.append(
+            {
+                "section": section,
+                "variable": label,
+                "matched_cases": _format_mean_sd(cases, column),
+                "matched_controls": _format_mean_sd(controls, column),
+                "effect_measure": "mean_difference",
+                "effect_size": _format_effect(effect),
+                "ci_95": _format_ci(low, high),
+                "smd": _format_smd(_continuous_smd(left, right)),
+                "p_value": _format_p_value(_continuous_p_value(left, right)),
+            }
+        )
+
+    def add_binary(section: str, label: str, column: str) -> None:
+        if column not in matched_df.columns:
+            return
+        left = _binary_series(cases, column)
+        right = _binary_series(controls, column)
+        effect, low, high = _odds_ratio_ci(left, right)
+        rows.append(
+            {
+                "section": section,
+                "variable": label,
+                "matched_cases": _format_binary(cases, column),
+                "matched_controls": _format_binary(controls, column),
+                "effect_measure": "odds_ratio",
+                "effect_size": _format_effect(effect),
+                "ci_95": _format_ci(low, high),
+                "smd": _format_smd(_binary_smd(left, right)),
+                "p_value": _format_p_value(_binary_p_value(left, right)),
+            }
+        )
+
+    add_continuous("Demographics", "Age at index, mean (SD)", "age_at_index")
+    add_binary("Demographics", "Female sex, n (%)", "is_female")
+
+    ancestry = "ancestry_pred"
+    if ancestry in matched_df.columns:
+        categories = sorted(matched_df[ancestry].dropna().astype(str).unique().tolist())
+        left = _categorical_series(cases, ancestry)
+        right = _categorical_series(controls, ancestry)
+        rows.append(
+            {
+                "section": "Demographics",
+                "variable": "Ancestry distribution, overall",
+                "matched_cases": "",
+                "matched_controls": "",
+                "effect_measure": "max_category_smd",
+                "effect_size": _format_smd(_categorical_smd(left, right, categories)),
+                "ci_95": "",
+                "smd": _format_smd(_categorical_smd(left, right, categories)),
+                "p_value": _format_p_value(_categorical_p_value(left, right, categories)),
+            }
+        )
+        for category in categories:
+            temp_col = f"__ancestry_{category}"
+            matched_df[temp_col] = (matched_df[ancestry].astype(str) == category).astype(int)
+            cases[temp_col] = (cases[ancestry].astype(str) == category).astype(int)
+            controls[temp_col] = (controls[ancestry].astype(str) == category).astype(int)
+            add_binary("Demographics", f"Ancestry: {category}, n (%)", temp_col)
+
+    clinical_columns = [
+        "crush_injury",
+        "preindex_crush_injury",
+        "periindex_crush_injury",
+        "sepsis",
+        "preindex_sepsis",
+        "periindex_sepsis",
+        "postindex_sepsis",
+        "renal_injury",
+        "preindex_renal_injury",
+        "periindex_renal_injury",
+        "postindex_renal_injury",
+    ]
+    for column in clinical_columns:
+        add_binary("Clinical", column.replace("_", " ").title() + ", n (%)", column)
+
+    return pd.DataFrame(rows)
+
+
+def build_critical_illness_summary(config: ProjectConfig, built_df: pd.DataFrame, matched_df: pd.DataFrame) -> pd.DataFrame:
+    cases, controls = _matched_groups(config, matched_df)
+    broad_flag = (
+        built_df["broad_rhabdo_case"].fillna(0).astype(int)
+        if "broad_rhabdo_case" in built_df.columns
+        else pd.Series(0, index=built_df.index)
+    )
+    groups = {
+        "built_broad_cases": built_df[broad_flag == 1].copy(),
+        "matched_cases": cases,
+        "matched_controls": controls,
+    }
+    variables = [
+        "definite_rhabdo_case",
+        "sepsis",
+        "preindex_sepsis",
+        "periindex_sepsis",
+        "postindex_sepsis",
+        "renal_injury",
+        "preindex_renal_injury",
+        "periindex_renal_injury",
+        "postindex_renal_injury",
+    ]
+    rows: list[dict[str, object]] = []
+    for group_name, frame in groups.items():
+        n = int(frame["person_id"].astype(str).nunique()) if "person_id" in frame.columns else len(frame)
+        rows.append({"group": group_name, "variable": "N", "n": n, "pct": ""})
+        for variable in variables:
+            if variable not in frame.columns:
+                continue
+            values = _binary_series(frame, variable)
+            count = int(values.sum())
+            rows.append(
+                {
+                    "group": group_name,
+                    "variable": variable,
+                    "n": count,
+                    "pct": f"{(100.0 * count / len(values)):.1f}" if len(values) else "",
+                }
+            )
+        for label, columns in {
+            "preindex_sepsis_or_renal_injury": ("preindex_sepsis", "preindex_renal_injury"),
+            "periindex_sepsis_or_renal_injury": ("periindex_sepsis", "periindex_renal_injury"),
+        }.items():
+            if all(column in frame.columns for column in columns):
+                values = ((_binary_series(frame, columns[0]) >= 1) | (_binary_series(frame, columns[1]) >= 1)).astype(float)
+                count = int(values.sum())
+                rows.append(
+                    {
+                        "group": group_name,
+                        "variable": label,
+                        "n": count,
+                        "pct": f"{(100.0 * count / len(values)):.1f}" if len(values) else "",
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def characterize_case_control_cohort(
+    config: ProjectConfig,
+    built_df: pd.DataFrame,
+    matched_df: pd.DataFrame,
+    paths: ProjectPaths,
+) -> dict[str, pd.DataFrame]:
+    consort = build_consort_counts(built_df, matched_df)
+    table1 = build_matched_table1(config, matched_df)
+    critical = build_critical_illness_summary(config, built_df, matched_df)
+
+    write_dataframe(consort, consort_counts_path(paths))
+    write_dataframe(table1, matched_table1_path(paths))
+    write_dataframe(critical, critical_illness_summary_path(paths))
+    _write_markdown_table(consort, consort_counts_report_path(paths), "CONSORT Counts")
+    _write_markdown_table(table1, matched_table1_report_path(paths), "Matched Clinical Table 1")
+    _write_markdown_table(critical, critical_illness_summary_report_path(paths), "Sepsis and Renal Injury Timing Summary")
+    report = "\n\n".join(
+        [
+            "# Clinical Cohort Characterization",
+            "## CONSORT Counts",
+            _markdown_table(consort),
+            "## Matched Clinical Table 1",
+            _markdown_table(table1),
+            "## Sepsis and Renal Injury Timing Summary",
+            _markdown_table(critical),
+            "",
+        ]
+    )
+    write_text(report, clinical_characterization_report_path(paths))
+    return {"consort": consort, "table1": table1, "critical_illness": critical}
 
 
 def summarize_clinical_demographics(
@@ -373,7 +683,15 @@ def summarize_clinical_demographics(
 
 
 __all__ = [
+    "characterize_case_control_cohort",
+    "clinical_characterization_report_path",
+    "consort_counts_path",
+    "consort_counts_report_path",
     "cohort_summary_report_path",
     "cohort_summary_table_path",
+    "critical_illness_summary_path",
+    "critical_illness_summary_report_path",
+    "matched_table1_path",
+    "matched_table1_report_path",
     "summarize_clinical_demographics",
 ]

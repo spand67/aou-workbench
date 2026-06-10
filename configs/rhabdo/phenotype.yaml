@@ -32,8 +32,8 @@ clinical_cofactors:
   - name: crush_injury
     condition_terms: [crush injury, crush syndrome]
   - name: sepsis
-    condition_terms: [sepsis]
+    condition_terms: [sepsis, septic shock]
   - name: renal_injury
-    condition_terms: [acute kidney injury]
+    condition_terms: [acute kidney injury, acute renal failure, acute kidney failure, acute tubular necrosis]
 control_exclusion_concept_ids: []
 min_observation_days: 180

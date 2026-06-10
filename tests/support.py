@@ -34,10 +34,13 @@ def build_demo_project_tree() -> dict[str, str]:
         )
     condition_rows = [
         {"person_id": 1, "condition_concept_id": 100, "condition_concept_name": "Rhabdomyolysis", "condition_start_date": "2022-01-10"},
+        {"person_id": 1, "condition_concept_id": 204, "condition_concept_name": "Septic shock", "condition_start_date": "2022-01-12"},
         {"person_id": 1, "condition_concept_id": 200, "condition_concept_name": "Type 2 diabetes mellitus", "condition_start_date": "2021-06-10"},
         {"person_id": 2, "condition_concept_id": 100, "condition_concept_name": "Rhabdomyolysis", "condition_start_date": "2022-02-12"},
+        {"person_id": 2, "condition_concept_id": 205, "condition_concept_name": "Acute renal failure syndrome", "condition_start_date": "2022-02-10"},
         {"person_id": 2, "condition_concept_id": 201, "condition_concept_name": "Essential hypertension", "condition_start_date": "2020-03-01"},
         {"person_id": 3, "condition_concept_id": 100, "condition_concept_name": "Rhabdomyolysis", "condition_start_date": "2022-03-15"},
+        {"person_id": 3, "condition_concept_id": 206, "condition_concept_name": "Sepsis", "condition_start_date": "2021-12-01"},
         {"person_id": 3, "condition_concept_id": 202, "condition_concept_name": "Acute kidney injury", "condition_start_date": "2021-11-05"},
         {"person_id": 4, "condition_concept_id": 100, "condition_concept_name": "Rhabdomyolysis", "condition_start_date": "2022-04-01"},
         {"person_id": 4, "condition_concept_id": 203, "condition_concept_name": "Myalgia", "condition_start_date": "2021-08-01"},
@@ -193,6 +196,14 @@ def build_demo_project_tree() -> dict[str, str]:
         "pc_columns": [f"PC{i}" for i in range(1, 11)],
         "clinical_person_id_column": "person_id",
         "clinical_cofactor_columns": ["statin_exposure", "crush_injury", "sepsis", "renal_injury"],
+        "clinical_cofactors": [
+            {"name": "crush_injury", "condition_terms": ["crush injury", "crush syndrome"]},
+            {"name": "sepsis", "condition_terms": ["sepsis", "septic shock"]},
+            {
+                "name": "renal_injury",
+                "condition_terms": ["acute kidney injury", "acute renal failure", "acute kidney failure", "acute tubular necrosis"],
+            },
+        ],
         "definite": {
             "condition_concept_ids": [100],
             "measurement_terms": ["creatine kinase"],

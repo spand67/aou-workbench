@@ -317,6 +317,59 @@ FROM person
 """.strip()
 
 
+def _render_cofactor_events_select(
+    config: ProjectConfig,
+    rule: ClinicalCofactorRule,
+    *,
+    cdr: str,
+) -> str:
+    condition_table = _qualify_table(cdr, config.phenotype.tables.condition_table)
+    concept_table = _qualify_table(cdr, config.phenotype.tables.concept_table)
+    predicate = _match_predicate(
+        concept_id_column=f"co.{config.phenotype.condition_concept_column}",
+        concept_name_column="condition_concept.concept_name",
+        concept_ids=rule.condition_concept_ids,
+        concept_terms=rule.condition_terms,
+    )
+    if predicate == "FALSE":
+        return _empty_result_sql(
+            columns=(
+                "CAST(NULL AS STRING) AS person_id",
+                "CAST(NULL AS STRING) AS cofactor",
+                "CAST(NULL AS DATE) AS condition_date",
+            )
+        )
+    name = _escape_term(rule.name)
+    return f"""
+SELECT
+  CAST(co.{config.phenotype.person_id_column} AS STRING) AS person_id,
+  '{name}' AS cofactor,
+  DATE(co.{config.phenotype.condition_date_column}) AS condition_date
+FROM `{condition_table}` co
+LEFT JOIN `{concept_table}` condition_concept
+  ON co.{config.phenotype.condition_concept_column} = condition_concept.concept_id
+WHERE ({predicate})
+  AND co.{config.phenotype.condition_date_column} IS NOT NULL
+GROUP BY person_id, cofactor, condition_date
+""".strip()
+
+
+def render_clinical_cofactor_events_sql(config: ProjectConfig) -> str:
+    if not config.phenotype.clinical_cofactors:
+        return _empty_result_sql(
+            columns=(
+                "CAST(NULL AS STRING) AS person_id",
+                "CAST(NULL AS STRING) AS cofactor",
+                "CAST(NULL AS DATE) AS condition_date",
+            )
+        )
+    cdr = config.workbench.workspace_cdr or "{{workspace_cdr}}"
+    return "\nUNION ALL\n".join(
+        _render_cofactor_events_select(config, rule, cdr=cdr)
+        for rule in config.phenotype.clinical_cofactors
+    )
+
+
 def render_covariate_sql(config: ProjectConfig) -> str:
     return render_baseline_sql(config)
 
@@ -324,6 +377,7 @@ def render_covariate_sql(config: ProjectConfig) -> str:
 __all__ = [
     "render_baseline_sql",
     "render_case_tier_sql",
+    "render_clinical_cofactor_events_sql",
     "render_clinical_cofactors_sql",
     "render_covariate_sql",
 ]

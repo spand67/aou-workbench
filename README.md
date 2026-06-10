@@ -65,6 +65,14 @@ aou-workbench build-cohort
 aou-workbench match-controls
 ```
 
+Characterize the inclusive case-control cohort before genomic modeling:
+
+```bash
+aou-workbench characterize-cohort
+```
+
+This writes CONSORT counts, a matched clinical Table 1 with effect sizes and 95% confidence intervals, and a sepsis/renal-injury timing summary under `cohort/` in the configured run root. Clinical cofactors are retained as ever/never flags and split into `preindex_*`, `periindex_*`, and `postindex_*` columns using the `[-7, +45]` day peri-index window. Use the pre-index columns as baseline covariates for matched models; treat peri-index sepsis and renal injury as acute-event characterization or sensitivity-stratification variables.
+
 Prepare and run Stage 1 with the direct WGS VDS workflow:
 
 ```bash

@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from .cohort import build_rhabdo_cohort, cohort_qc_summary
+from .cohort import apply_time_anchored_clinical_cofactors, build_rhabdo_cohort, cohort_qc_summary
 from .config import ProjectConfig
 from .io_utils import write_dataframe, write_json, write_text
 from .matching import match_case_controls, matching_qc_summary, matching_universe
@@ -14,6 +14,7 @@ from .paths import ProjectPaths, build_output_paths
 from .phenotype_sql import (
     render_baseline_sql,
     render_case_tier_sql,
+    render_clinical_cofactor_events_sql,
     render_clinical_cofactors_sql,
     render_covariate_sql,
 )
@@ -46,6 +47,7 @@ def _write_rendered_sql(config: ProjectConfig, paths: ProjectPaths) -> None:
     write_text(render_case_tier_sql(config, config.phenotype.broad), f"{paths.cohort_sql_root}/rhabdo_broad.sql")
     if config.phenotype.clinical_cofactors:
         write_text(render_clinical_cofactors_sql(config), f"{paths.cohort_sql_root}/clinical_cofactors.sql")
+        write_text(render_clinical_cofactor_events_sql(config), f"{paths.cohort_sql_root}/clinical_cofactor_events.sql")
     write_text(render_covariate_sql(config), f"{paths.cohort_sql_root}/rhabdo_covariates.sql")
 
 
@@ -66,7 +68,7 @@ def match_controls_artifacts(config: ProjectConfig, cohort_df: pd.DataFrame | No
     if cohort_df is None:
         cohort_df = build_rhabdo_cohort(effective)
     matching_universe_df = matching_universe(cohort_df, effective)
-    matched_df = match_case_controls(cohort_df, effective)
+    matched_df = apply_time_anchored_clinical_cofactors(effective, match_case_controls(cohort_df, effective))
     write_dataframe(matched_df, paths.matched_cohort_tsv)
     qc_payload = cohort_qc_summary(cohort_df)
     qc_payload["matching_universe_rows"] = int(len(matching_universe_df))
@@ -85,7 +87,7 @@ def run_all(config: ProjectConfig, *, skip_preflight: bool = False) -> ProjectPa
         assert_preflight_ok(checks)
     cohort_df = build_rhabdo_cohort(effective)
     matching_universe_df = matching_universe(cohort_df, effective)
-    matched_df = match_case_controls(cohort_df, effective)
+    matched_df = apply_time_anchored_clinical_cofactors(effective, match_case_controls(cohort_df, effective))
     write_dataframe(cohort_df, paths.built_cohort_tsv)
     write_dataframe(matched_df, paths.matched_cohort_tsv)
     _write_rendered_sql(effective, paths)

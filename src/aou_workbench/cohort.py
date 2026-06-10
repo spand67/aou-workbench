@@ -10,7 +10,15 @@ import pandas as pd
 
 from .config import CaseTierRule, ProjectConfig
 from .io_utils import parse_date, query_bigquery_dataframe, read_table
-from .phenotype_sql import render_baseline_sql, render_case_tier_sql, render_clinical_cofactors_sql
+from .phenotype_sql import (
+    render_baseline_sql,
+    render_case_tier_sql,
+    render_clinical_cofactor_events_sql,
+)
+
+
+PERIINDEX_COFACTOR_START_DAYS = -7
+PERIINDEX_COFACTOR_END_DAYS = 45
 
 
 def _normalize_sex(series: pd.Series) -> pd.Series:
@@ -183,7 +191,7 @@ def _aggregate_condition_hits_local(
         lowered = raw["condition_concept_name"].astype(str).str.lower()
         term_mask = pd.Series(False, index=raw.index)
         for term in concept_terms:
-            term_mask |= lowered.str.contains(term.lower(), regex=False)
+            term_mask |= lowered.str.contains(term.lower(), regex=False, na=False)
         mask |= term_mask
     filtered = raw[mask].copy()
     if filtered.empty:
@@ -290,38 +298,189 @@ def _high_ck_rule(config: ProjectConfig) -> CaseTierRule:
     )
 
 
-def _prepare_clinical_local(config: ProjectConfig) -> pd.DataFrame:
+def _prepare_clinical_local(config: ProjectConfig, clinical_events: pd.DataFrame | None = None) -> pd.DataFrame:
+    clinical_events = clinical_events if clinical_events is not None else _clinical_cofactor_events_local(config)
+    event_ever = _cofactor_ever_frame(config, clinical_events)
     columns = config.phenotype.clinical_cofactor_columns
     if config.phenotype.tables.clinical_table and columns:
         raw = read_table(config.phenotype.tables.clinical_table).copy()
         output = pd.DataFrame({"person_id": raw[config.phenotype.clinical_person_id_column].astype(str)})
         for column in columns:
             output[column] = raw[column] if column in raw.columns else np.nan
-        return output
-    if not config.phenotype.clinical_cofactors:
-        return pd.DataFrame(columns=["person_id"])
-    output: pd.DataFrame | None = None
-    for rule in config.phenotype.clinical_cofactors:
-        hits = _aggregate_condition_hits_local(config, rule.condition_concept_ids, rule.condition_terms)
-        column = pd.DataFrame({"person_id": hits["person_id"], rule.name: 1})
-        output = column if output is None else output.merge(column, on="person_id", how="outer")
-    if output is None:
+        output = _merge_clinical_ever_frames(config, output, event_ever)
+    else:
+        output = event_ever
+    if output.empty:
         return pd.DataFrame(columns=["person_id"])
     for rule in config.phenotype.clinical_cofactors:
+        if rule.name not in output.columns:
+            output[rule.name] = 0
         output[rule.name] = output[rule.name].fillna(0).astype(int)
     return output
 
 
-def _prepare_clinical_bigquery(config: ProjectConfig) -> pd.DataFrame:
+def _prepare_clinical_bigquery(config: ProjectConfig, clinical_events: pd.DataFrame | None = None) -> pd.DataFrame:
     if not config.phenotype.clinical_cofactors:
         return pd.DataFrame(columns=["person_id"])
-    frame = query_bigquery_dataframe(render_clinical_cofactors_sql(config))
+    clinical_events = clinical_events if clinical_events is not None else _clinical_cofactor_events_bigquery(config)
+    frame = _cofactor_ever_frame(config, clinical_events)
     if frame.empty:
         return frame
     for rule in config.phenotype.clinical_cofactors:
         if rule.name in frame.columns:
             frame[rule.name] = pd.to_numeric(frame[rule.name], errors="coerce").fillna(0).astype(int)
     return frame
+
+
+def _clinical_cofactor_events_local(config: ProjectConfig) -> pd.DataFrame:
+    if not config.phenotype.clinical_cofactors:
+        return pd.DataFrame(columns=["person_id", "cofactor", "condition_date"])
+    raw = read_table(config.phenotype.tables.condition_table).copy()
+    if raw.empty:
+        return pd.DataFrame(columns=["person_id", "cofactor", "condition_date"])
+    rows: list[pd.DataFrame] = []
+    for rule in config.phenotype.clinical_cofactors:
+        mask = pd.Series(False, index=raw.index)
+        if rule.condition_concept_ids:
+            mask |= raw[config.phenotype.condition_concept_column].isin(rule.condition_concept_ids)
+        if rule.condition_terms and "condition_concept_name" in raw.columns:
+            lowered = raw["condition_concept_name"].astype(str).str.lower()
+            term_mask = pd.Series(False, index=raw.index)
+            for term in rule.condition_terms:
+                term_mask |= lowered.str.contains(term.lower(), regex=False, na=False)
+            mask |= term_mask
+        filtered = raw[mask].copy()
+        if filtered.empty:
+            continue
+        rows.append(
+            pd.DataFrame(
+                {
+                    "person_id": filtered[config.phenotype.person_id_column].astype(str),
+                    "cofactor": rule.name,
+                    "condition_date": parse_date(filtered[config.phenotype.condition_date_column]),
+                }
+            )
+        )
+    if not rows:
+        return pd.DataFrame(columns=["person_id", "cofactor", "condition_date"])
+    return pd.concat(rows, ignore_index=True).dropna(subset=["condition_date"]).drop_duplicates()
+
+
+def _clinical_cofactor_events_bigquery(config: ProjectConfig) -> pd.DataFrame:
+    if not config.phenotype.clinical_cofactors:
+        return pd.DataFrame(columns=["person_id", "cofactor", "condition_date"])
+    events = query_bigquery_dataframe(render_clinical_cofactor_events_sql(config))
+    if events.empty:
+        return pd.DataFrame(columns=["person_id", "cofactor", "condition_date"])
+    events["person_id"] = events["person_id"].astype(str)
+    events["cofactor"] = events["cofactor"].astype(str)
+    events["condition_date"] = parse_date(events["condition_date"])
+    return events.dropna(subset=["condition_date"]).drop_duplicates()
+
+
+def _cofactor_ever_frame(config: ProjectConfig, events: pd.DataFrame) -> pd.DataFrame:
+    names = [rule.name for rule in config.phenotype.clinical_cofactors]
+    if not names:
+        return pd.DataFrame(columns=["person_id"])
+    if events.empty:
+        return pd.DataFrame(columns=["person_id", *names])
+    frame = events[events["cofactor"].isin(names)][["person_id", "cofactor"]].drop_duplicates().copy()
+    if frame.empty:
+        return pd.DataFrame(columns=["person_id", *names])
+    frame["value"] = 1
+    wide = (
+        frame.pivot_table(index="person_id", columns="cofactor", values="value", aggfunc="max", fill_value=0)
+        .reset_index()
+        .rename_axis(None, axis=1)
+    )
+    for name in names:
+        if name not in wide.columns:
+            wide[name] = 0
+        wide[name] = pd.to_numeric(wide[name], errors="coerce").fillna(0).astype(int)
+    return wide[["person_id", *names]]
+
+
+def _merge_clinical_ever_frames(
+    config: ProjectConfig,
+    left: pd.DataFrame,
+    right: pd.DataFrame,
+) -> pd.DataFrame:
+    if left.empty:
+        return right
+    if right.empty:
+        return left
+    names = [rule.name for rule in config.phenotype.clinical_cofactors]
+    merged = left.merge(right, on="person_id", how="outer", suffixes=("", "_event"))
+    for name in names:
+        left_source = merged[name] if name in merged.columns else pd.Series(0, index=merged.index)
+        event_source = merged[f"{name}_event"] if f"{name}_event" in merged.columns else pd.Series(0, index=merged.index)
+        left_values = pd.to_numeric(left_source, errors="coerce").fillna(0)
+        event_values = pd.to_numeric(event_source, errors="coerce").fillna(0)
+        merged[name] = ((left_values >= 1) | (event_values >= 1)).astype(int)
+        if f"{name}_event" in merged.columns:
+            merged = merged.drop(columns=[f"{name}_event"])
+    return merged
+
+
+def apply_time_anchored_clinical_cofactors(
+    config: ProjectConfig,
+    cohort_df: pd.DataFrame,
+    events: pd.DataFrame | None = None,
+    *,
+    periindex_start_days: int = PERIINDEX_COFACTOR_START_DAYS,
+    periindex_end_days: int = PERIINDEX_COFACTOR_END_DAYS,
+) -> pd.DataFrame:
+    output = cohort_df.copy()
+    names = [rule.name for rule in config.phenotype.clinical_cofactors]
+    if not names:
+        return output
+    output["person_id"] = output["person_id"].astype(str)
+    output["index_date"] = parse_date(output["index_date"])
+    for name in names:
+        base_values = output[name] if name in output.columns else pd.Series(0, index=output.index)
+        output[name] = pd.to_numeric(base_values, errors="coerce").fillna(0).astype(int)
+        for prefix in ("preindex", "periindex", "postindex"):
+            output[f"{prefix}_{name}"] = 0
+    if events is None:
+        events = (
+            _clinical_cofactor_events_local(config)
+            if config.phenotype.tables.cohort_table
+            else _clinical_cofactor_events_bigquery(config)
+        )
+    if events.empty:
+        return output
+    events = events.copy()
+    events["person_id"] = events["person_id"].astype(str)
+    events["cofactor"] = events["cofactor"].astype(str)
+    events = events[events["cofactor"].isin(names)].copy()
+    if events.empty:
+        return output
+    events["condition_date"] = parse_date(events["condition_date"])
+    indexed = output[["person_id", "index_date"]].copy()
+    indexed["_row_id"] = output.index
+    merged = events.merge(indexed, on="person_id", how="inner")
+    if merged.empty:
+        return output
+    for name in names:
+        rows = merged.loc[merged["cofactor"] == name, "_row_id"].dropna().unique()
+        if len(rows):
+            output.loc[rows, name] = 1
+    timed = merged[merged["index_date"].notna() & merged["condition_date"].notna()].copy()
+    if timed.empty:
+        return output
+    timed["delta_days"] = (timed["condition_date"] - timed["index_date"]).dt.days
+    masks = {
+        "preindex": timed["delta_days"] < periindex_start_days,
+        "periindex": timed["delta_days"].between(periindex_start_days, periindex_end_days, inclusive="both"),
+        "postindex": timed["delta_days"] > periindex_end_days,
+    }
+    for prefix, mask in masks.items():
+        subset = timed[mask]
+        for name in names:
+            rows = subset.loc[subset["cofactor"] == name, "_row_id"].dropna().unique()
+            if len(rows):
+                output.loc[rows, f"{prefix}_{name}"] = 1
+    return output
 
 
 def _merge_case_hits(base: pd.DataFrame, tier_hits: pd.DataFrame, tier: CaseTierRule, prefix: str) -> pd.DataFrame:
@@ -444,7 +603,8 @@ def _build_local_cohort(config: ProjectConfig) -> pd.DataFrame:
     base = _prepare_baseline_local(config)
     base = base.merge(_prepare_denominator_local(config), on="person_id", how="left")
     base = base.merge(_prepare_ancestry_table(config), on="person_id", how="left")
-    base = base.merge(_prepare_clinical_local(config), on="person_id", how="left")
+    clinical_events = _clinical_cofactor_events_local(config)
+    base = base.merge(_prepare_clinical_local(config, clinical_events), on="person_id", how="left")
     broad_hits = _case_tier_hits_local(config, config.phenotype.broad)
     broad = _merge_case_hits(base, broad_hits, config.phenotype.broad, "broad")
     definite_hits = _case_tier_hits_local(config, config.phenotype.definite)
@@ -470,7 +630,8 @@ def _build_local_cohort(config: ProjectConfig) -> pd.DataFrame:
         config,
         config.phenotype.control_exclusion_concept_ids,
     )
-    return _finalize_cohort(cohort, config, control_exclusion_ids=set(control_exclusions["person_id"]))
+    finalized = _finalize_cohort(cohort, config, control_exclusion_ids=set(control_exclusions["person_id"]))
+    return apply_time_anchored_clinical_cofactors(config, finalized, clinical_events)
 
 
 def _build_bigquery_cohort(config: ProjectConfig) -> pd.DataFrame:
@@ -481,7 +642,8 @@ def _build_bigquery_cohort(config: ProjectConfig) -> pd.DataFrame:
     if not ancestry.empty:
         base = base.drop(columns=[column for column in ancestry.columns if column != "person_id" and column in base.columns])
         base = base.merge(ancestry, on="person_id", how="left")
-    clinical = _prepare_clinical_bigquery(config)
+    clinical_events = _clinical_cofactor_events_bigquery(config)
+    clinical = _prepare_clinical_bigquery(config, clinical_events)
     if not clinical.empty:
         base = base.merge(clinical, on="person_id", how="left")
     broad = _merge_case_hits(
@@ -523,7 +685,8 @@ def _build_bigquery_cohort(config: ProjectConfig) -> pd.DataFrame:
         )
         exclusions = query_bigquery_dataframe(render_case_tier_sql(config, exclusion_rule))
         control_exclusion_ids = set(exclusions.get("person_id", pd.Series(dtype=str)).astype(str))
-    return _finalize_cohort(cohort, config, control_exclusion_ids=control_exclusion_ids)
+    finalized = _finalize_cohort(cohort, config, control_exclusion_ids=control_exclusion_ids)
+    return apply_time_anchored_clinical_cofactors(config, finalized, clinical_events)
 
 
 def build_rhabdo_cohort(config: ProjectConfig) -> pd.DataFrame:
@@ -545,4 +708,10 @@ def cohort_qc_summary(cohort_df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-__all__ = ["build_rhabdo_cohort", "cohort_qc_summary"]
+__all__ = [
+    "PERIINDEX_COFACTOR_END_DAYS",
+    "PERIINDEX_COFACTOR_START_DAYS",
+    "apply_time_anchored_clinical_cofactors",
+    "build_rhabdo_cohort",
+    "cohort_qc_summary",
+]
