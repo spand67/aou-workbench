@@ -81,7 +81,10 @@ def _parse_windows(values: Iterable[str | int | None] | None) -> tuple[int | Non
 
 def _case_frame(config: ProjectConfig, cohort_df: pd.DataFrame, case_tier: str | None) -> pd.DataFrame:
     tier = case_tier or config.cohort.primary_case_tier
-    cases = cohort_df[cohort_df["case_tier"].astype(str) == tier].copy()
+    if tier == "broad" and "broad_rhabdo_case" in cohort_df.columns:
+        cases = cohort_df[cohort_df["broad_rhabdo_case"].fillna(0).astype(int) == 1].copy()
+    else:
+        cases = cohort_df[cohort_df["case_tier"].astype(str) == tier].copy()
     if cases.empty:
         raise ValueError(f"No cases found with case_tier={tier!r}.")
     cases["person_id"] = cases["person_id"].astype(str)

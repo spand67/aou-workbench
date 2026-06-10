@@ -72,6 +72,53 @@ def _prepare_baseline_bigquery(config: ProjectConfig) -> pd.DataFrame:
     return frame
 
 
+def _prepare_denominator_local(config: ProjectConfig) -> pd.DataFrame:
+    raw = read_table(config.phenotype.tables.condition_table).copy()
+    if raw.empty:
+        return pd.DataFrame(
+            columns=[
+                "person_id",
+                "omop_condition_record_dates",
+                "omop_condition_record_source",
+                "eligible_ehr_denominator",
+            ]
+        )
+    frame = pd.DataFrame(
+        {
+            "person_id": raw[config.phenotype.person_id_column].astype(str),
+            "condition_date": parse_date(raw[config.phenotype.condition_date_column]),
+        }
+    )
+    source_column = next(
+        (
+            column
+            for column in ("condition_source_vocabulary_id", "source_vocabulary_id", "vocabulary_id")
+            if column in raw.columns
+        ),
+        None,
+    )
+    if source_column:
+        source_values = raw[source_column].astype(str).str.upper()
+        use_icd = source_values.str.startswith("ICD").any()
+    else:
+        source_values = pd.Series("", index=raw.index)
+        use_icd = False
+    if use_icd:
+        frame = frame[source_values.str.startswith("ICD")].copy()
+        source = "icd_source_condition_records"
+    else:
+        source = "all_condition_records"
+    counts = (
+        frame.dropna(subset=["condition_date"])
+        .groupby("person_id", as_index=False)["condition_date"]
+        .nunique()
+        .rename(columns={"condition_date": "omop_condition_record_dates"})
+    )
+    counts["omop_condition_record_source"] = source
+    counts["eligible_ehr_denominator"] = counts["omop_condition_record_dates"] >= 2
+    return counts
+
+
 def _parse_pca_features(value: Any, count: int) -> list[float]:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return [np.nan] * count
@@ -147,6 +194,17 @@ def _aggregate_condition_hits_local(
 
 
 def _aggregate_measurement_hits_local(config: ProjectConfig, tier: CaseTierRule) -> pd.DataFrame:
+    filtered = _aggregate_measurement_events_local(config, tier)
+    if filtered.empty:
+        return pd.DataFrame(columns=["person_id", "measurement_date", "measurement_value"])
+    return (
+        filtered.sort_values(["person_id", "measurement_date"])
+        .groupby("person_id", as_index=False)
+        .agg(measurement_date=("measurement_date", "min"), measurement_value=("measurement_value", "max"))
+    )
+
+
+def _aggregate_measurement_events_local(config: ProjectConfig, tier: CaseTierRule) -> pd.DataFrame:
     raw = read_table(config.phenotype.tables.measurement_table).copy()
     mask = pd.Series(False, index=raw.index)
     if tier.measurement_concept_ids:
@@ -166,10 +224,69 @@ def _aggregate_measurement_hits_local(config: ProjectConfig, tier: CaseTierRule)
     filtered["person_id"] = filtered[config.phenotype.person_id_column].astype(str)
     filtered["measurement_date"] = parse_date(filtered[config.phenotype.measurement_date_column])
     filtered["measurement_value"] = pd.to_numeric(filtered[config.phenotype.measurement_value_column], errors="coerce")
+    return filtered[["person_id", "measurement_date", "measurement_value"]].copy()
+
+
+def _case_tier_hits_local(config: ProjectConfig, tier: CaseTierRule) -> pd.DataFrame:
+    conditions = _aggregate_condition_hits_local(
+        config,
+        tier.condition_concept_ids,
+        tier.condition_terms,
+    )
+    measurements = _aggregate_measurement_events_local(config, tier)
+    empty_measurement = pd.DataFrame(
+        {
+            "measurement_date": pd.Series(pd.NaT, dtype="datetime64[ns]"),
+            "measurement_value": pd.Series(dtype=float),
+        }
+    )
+    if tier.require_condition and not tier.require_measurement:
+        return pd.concat([conditions.reset_index(drop=True), empty_measurement.iloc[: len(conditions)].reset_index(drop=True)], axis=1)
+    if tier.require_measurement and not tier.require_condition:
+        return _aggregate_measurement_hits_local(config, tier).assign(condition_date=pd.NaT)[
+            ["person_id", "condition_date", "measurement_date", "measurement_value"]
+        ]
+    if not tier.require_condition and not tier.require_measurement:
+        condition_hits = pd.concat(
+            [conditions.reset_index(drop=True), empty_measurement.iloc[: len(conditions)].reset_index(drop=True)],
+            axis=1,
+        )
+        measurement_hits = _aggregate_measurement_hits_local(config, tier).assign(condition_date=pd.NaT)[
+            ["person_id", "condition_date", "measurement_date", "measurement_value"]
+        ]
+        return pd.concat([condition_hits, measurement_hits], ignore_index=True).drop_duplicates("person_id")
+    if conditions.empty or measurements.empty:
+        return pd.DataFrame(columns=["person_id", "condition_date", "measurement_date", "measurement_value"])
+    merged = conditions.merge(measurements, on="person_id", how="inner")
+    delta = (merged["measurement_date"] - merged["condition_date"]).dt.days
+    merged = merged[
+        delta.between(
+            tier.measurement_window_start_days,
+            tier.measurement_window_end_days,
+            inclusive="both",
+        )
+    ].copy()
+    if merged.empty:
+        return pd.DataFrame(columns=["person_id", "condition_date", "measurement_date", "measurement_value"])
     return (
-        filtered.sort_values(["person_id", "measurement_date"])
+        merged.sort_values(["person_id", "measurement_date"])
         .groupby("person_id", as_index=False)
-        .agg(measurement_date=("measurement_date", "min"), measurement_value=("measurement_value", "max"))
+        .agg(
+            condition_date=("condition_date", "first"),
+            measurement_date=("measurement_date", "first"),
+            measurement_value=("measurement_value", "max"),
+        )
+    )
+
+
+def _high_ck_rule(config: ProjectConfig) -> CaseTierRule:
+    return CaseTierRule(
+        name="high_ck",
+        measurement_concept_ids=config.phenotype.definite.measurement_concept_ids,
+        measurement_terms=config.phenotype.definite.measurement_terms,
+        measurement_min=config.phenotype.definite.measurement_min,
+        require_condition=False,
+        require_measurement=True,
     )
 
 
@@ -230,14 +347,30 @@ def _merge_case_hits(base: pd.DataFrame, tier_hits: pd.DataFrame, tier: CaseTier
     if tier.require_condition and tier.require_measurement:
         day_delta = (
             output[f"{prefix}_measurement_date"] - output[f"{prefix}_condition_date"]
-        ).abs().dt.days
-        rule_hit &= day_delta.fillna(np.inf) <= tier.lookback_days
+        ).dt.days
+        rule_hit &= day_delta.between(
+            tier.measurement_window_start_days,
+            tier.measurement_window_end_days,
+            inclusive="both",
+        ).fillna(False)
     elif not tier.require_condition and not tier.require_measurement:
         rule_hit &= output[f"{prefix}_has_condition"] | output[f"{prefix}_has_measurement"]
     output[f"{prefix}_rule_hit"] = rule_hit
-    output[f"{prefix}_index_date"] = output[
-        [f"{prefix}_condition_date", f"{prefix}_measurement_date"]
-    ].min(axis=1)
+    output[f"{prefix}_index_date"] = output[f"{prefix}_condition_date"].combine_first(output[f"{prefix}_measurement_date"])
+    return output
+
+
+def _merge_high_ck_hits(base: pd.DataFrame, high_ck_hits: pd.DataFrame) -> pd.DataFrame:
+    output = base.merge(high_ck_hits, on="person_id", how="left")
+    if "condition_date" in output.columns:
+        output = output.drop(columns=["condition_date"])
+    output = output.rename(
+        columns={
+            "measurement_date": "high_ck_measurement_date",
+            "measurement_value": "high_ck_measurement_value",
+        }
+    )
+    output["high_ck_has_measurement"] = output["high_ck_measurement_date"].notna()
     return output
 
 
@@ -248,14 +381,38 @@ def _finalize_cohort(
     control_exclusion_ids: set[str] | None = None,
 ) -> pd.DataFrame:
     output = cohort_df.copy()
-    output["case_tier"] = np.where(
-        output["definite_rule_hit"],
-        "definite",
-        np.where(output["probable_rule_hit"], "probable", "control"),
+    output["omop_condition_record_dates"] = pd.to_numeric(
+        output.get("omop_condition_record_dates", 0),
+        errors="coerce",
+    ).fillna(0).astype(int)
+    output["omop_condition_record_source"] = output.get(
+        "omop_condition_record_source",
+        pd.Series("all_condition_records", index=output.index),
+    ).fillna("all_condition_records")
+    output["eligible_ehr_denominator"] = output["omop_condition_record_dates"] >= 2
+    output["broad_rule_hit"] = output["broad_rule_hit"] & output["eligible_ehr_denominator"]
+    output["definite_rule_hit"] = output["definite_rule_hit"] & output["broad_rule_hit"]
+    output["high_ck_has_measurement"] = output.get("high_ck_has_measurement", False).fillna(False).astype(bool)
+    output["high_ck_without_rhabdo"] = (
+        output["eligible_ehr_denominator"]
+        & output["high_ck_has_measurement"]
+        & (~output["broad_rule_hit"])
     )
-    output["rhabdo_case"] = (output["case_tier"] != "control").astype(int)
-    output["rhabdo_primary_case"] = (output["case_tier"] == "definite").astype(int)
-    output["index_date"] = output["definite_index_date"].combine_first(output["probable_index_date"])
+    output["case_tier"] = np.select(
+        [
+            ~output["eligible_ehr_denominator"],
+            output["definite_rule_hit"],
+            output["broad_rule_hit"],
+            output["high_ck_without_rhabdo"],
+        ],
+        ["excluded_denominator", "definite", "broad", "indeterminate_ck_only"],
+        default="control",
+    )
+    output["broad_rhabdo_case"] = output["broad_rule_hit"].astype(int)
+    output["definite_rhabdo_case"] = output["definite_rule_hit"].astype(int)
+    output["rhabdo_case"] = output["broad_rhabdo_case"]
+    output["rhabdo_primary_case"] = output["definite_rhabdo_case"]
+    output["index_date"] = output["broad_index_date"].combine_first(output["definite_index_date"])
     if "baseline_index_date" in output.columns:
         output["index_date"] = output["index_date"].combine_first(output["baseline_index_date"])
     observation_days = (output["obs_end_date"] - output["obs_start_date"]).dt.days
@@ -285,33 +442,35 @@ def _finalize_cohort(
 
 def _build_local_cohort(config: ProjectConfig) -> pd.DataFrame:
     base = _prepare_baseline_local(config)
+    base = base.merge(_prepare_denominator_local(config), on="person_id", how="left")
     base = base.merge(_prepare_ancestry_table(config), on="person_id", how="left")
     base = base.merge(_prepare_clinical_local(config), on="person_id", how="left")
-    definite_hits = _aggregate_condition_hits_local(
-        config,
-        config.phenotype.definite.condition_concept_ids,
-        config.phenotype.definite.condition_terms,
-    ).merge(
-        _aggregate_measurement_hits_local(config, config.phenotype.definite),
-        on="person_id",
-        how="outer",
-    )
+    broad_hits = _case_tier_hits_local(config, config.phenotype.broad)
+    broad = _merge_case_hits(base, broad_hits, config.phenotype.broad, "broad")
+    definite_hits = _case_tier_hits_local(config, config.phenotype.definite)
     definite = _merge_case_hits(base, definite_hits, config.phenotype.definite, "definite")
-    probable_hits = _aggregate_condition_hits_local(
-        config,
-        config.phenotype.probable.condition_concept_ids,
-        config.phenotype.probable.condition_terms,
-    ).merge(
-        _aggregate_measurement_hits_local(config, config.phenotype.probable),
+    cohort = broad.merge(
+        definite[
+            [
+                "person_id",
+                "definite_condition_date",
+                "definite_measurement_date",
+                "definite_measurement_value",
+                "definite_has_condition",
+                "definite_has_measurement",
+                "definite_rule_hit",
+                "definite_index_date",
+            ]
+        ],
         on="person_id",
-        how="outer",
+        how="left",
     )
-    probable = _merge_case_hits(definite, probable_hits, config.phenotype.probable, "probable")
+    cohort = _merge_high_ck_hits(cohort, _aggregate_measurement_hits_local(config, _high_ck_rule(config)))
     control_exclusions = _aggregate_condition_hits_local(
         config,
         config.phenotype.control_exclusion_concept_ids,
     )
-    return _finalize_cohort(probable, config, control_exclusion_ids=set(control_exclusions["person_id"]))
+    return _finalize_cohort(cohort, config, control_exclusion_ids=set(control_exclusions["person_id"]))
 
 
 def _build_bigquery_cohort(config: ProjectConfig) -> pd.DataFrame:
@@ -325,18 +484,35 @@ def _build_bigquery_cohort(config: ProjectConfig) -> pd.DataFrame:
     clinical = _prepare_clinical_bigquery(config)
     if not clinical.empty:
         base = base.merge(clinical, on="person_id", how="left")
+    broad = _merge_case_hits(
+        base,
+        query_bigquery_dataframe(render_case_tier_sql(config, config.phenotype.broad)),
+        config.phenotype.broad,
+        "broad",
+    )
     definite = _merge_case_hits(
         base,
         query_bigquery_dataframe(render_case_tier_sql(config, config.phenotype.definite)),
         config.phenotype.definite,
         "definite",
     )
-    probable = _merge_case_hits(
-        definite,
-        query_bigquery_dataframe(render_case_tier_sql(config, config.phenotype.probable)),
-        config.phenotype.probable,
-        "probable",
+    cohort = broad.merge(
+        definite[
+            [
+                "person_id",
+                "definite_condition_date",
+                "definite_measurement_date",
+                "definite_measurement_value",
+                "definite_has_condition",
+                "definite_has_measurement",
+                "definite_rule_hit",
+                "definite_index_date",
+            ]
+        ],
+        on="person_id",
+        how="left",
     )
+    cohort = _merge_high_ck_hits(cohort, query_bigquery_dataframe(render_case_tier_sql(config, _high_ck_rule(config))))
     control_exclusion_ids: set[str] = set()
     if config.phenotype.control_exclusion_concept_ids:
         exclusion_rule = CaseTierRule(
@@ -347,7 +523,7 @@ def _build_bigquery_cohort(config: ProjectConfig) -> pd.DataFrame:
         )
         exclusions = query_bigquery_dataframe(render_case_tier_sql(config, exclusion_rule))
         control_exclusion_ids = set(exclusions.get("person_id", pd.Series(dtype=str)).astype(str))
-    return _finalize_cohort(probable, config, control_exclusion_ids=control_exclusion_ids)
+    return _finalize_cohort(cohort, config, control_exclusion_ids=control_exclusion_ids)
 
 
 def build_rhabdo_cohort(config: ProjectConfig) -> pd.DataFrame:
@@ -360,7 +536,11 @@ def cohort_qc_summary(cohort_df: pd.DataFrame) -> dict[str, Any]:
     case_counts = cohort_df["case_tier"].value_counts(dropna=False).to_dict()
     return {
         "n_people": int(len(cohort_df)),
+        "eligible_ehr_denominator": int(cohort_df.get("eligible_ehr_denominator", pd.Series(dtype=bool)).sum()),
         "case_counts": {str(key): int(value) for key, value in case_counts.items()},
+        "broad_rhabdo_cases": int(cohort_df.get("broad_rhabdo_case", pd.Series(dtype=int)).sum()),
+        "definite_rhabdo_cases": int(cohort_df.get("definite_rhabdo_case", pd.Series(dtype=int)).sum()),
+        "indeterminate_ck_only": int((cohort_df.get("case_tier", pd.Series(dtype=str)) == "indeterminate_ck_only").sum()),
         "eligible_controls": int(cohort_df.get("eligible_control", pd.Series(dtype=int)).sum()),
     }
 

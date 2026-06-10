@@ -40,7 +40,25 @@ def build_demo_project_tree() -> dict[str, str]:
         {"person_id": 3, "condition_concept_id": 100, "condition_concept_name": "Rhabdomyolysis", "condition_start_date": "2022-03-15"},
         {"person_id": 3, "condition_concept_id": 202, "condition_concept_name": "Acute kidney injury", "condition_start_date": "2021-11-05"},
         {"person_id": 4, "condition_concept_id": 100, "condition_concept_name": "Rhabdomyolysis", "condition_start_date": "2022-04-01"},
+        {"person_id": 4, "condition_concept_id": 203, "condition_concept_name": "Myalgia", "condition_start_date": "2021-08-01"},
     ]
+    for person_id in range(5, 16):
+        condition_rows.extend(
+            [
+                {
+                    "person_id": person_id,
+                    "condition_concept_id": 300,
+                    "condition_concept_name": "Routine health maintenance",
+                    "condition_start_date": "2021-01-01",
+                },
+                {
+                    "person_id": person_id,
+                    "condition_concept_id": 301,
+                    "condition_concept_name": "Viral upper respiratory tract infection",
+                    "condition_start_date": "2021-07-01",
+                },
+            ]
+        )
     measurement_rows = [
         {"person_id": 1, "measurement_concept_id": 900, "measurement_concept_name": "Creatine kinase", "value_as_number": 6800, "measurement_date": "2022-01-11"},
         {"person_id": 1, "measurement_concept_id": 901, "measurement_concept_name": "Creatinine", "value_as_number": 0.9, "measurement_date": "2021-12-15"},
@@ -49,6 +67,7 @@ def build_demo_project_tree() -> dict[str, str]:
         {"person_id": 3, "measurement_concept_id": 900, "measurement_concept_name": "Creatine kinase", "value_as_number": 5600, "measurement_date": "2022-03-16"},
         {"person_id": 3, "measurement_concept_id": 901, "measurement_concept_name": "Creatinine", "value_as_number": 1.1, "measurement_date": "2021-10-01"},
         {"person_id": 4, "measurement_concept_id": 900, "measurement_concept_name": "Creatine kinase", "value_as_number": 1800, "measurement_date": "2022-04-01"},
+        {"person_id": 15, "measurement_concept_id": 900, "measurement_concept_name": "Creatine kinase", "value_as_number": 6200, "measurement_date": "2021-09-01"},
     ]
     ancestry_rows = []
     for person_id in range(1, 16):
@@ -181,8 +200,10 @@ def build_demo_project_tree() -> dict[str, str]:
             "measurement_min": 5000,
             "require_condition": True,
             "require_measurement": True,
+            "measurement_window_start_days": -7,
+            "measurement_window_end_days": 45,
         },
-        "probable": {
+        "broad": {
             "condition_concept_ids": [100],
             "require_condition": True,
             "require_measurement": False,
@@ -195,7 +216,8 @@ def build_demo_project_tree() -> dict[str, str]:
         "age_tolerance_years": 8,
         "index_window_days": 365,
         "exact_match_columns": ["is_female", "ancestry_pred"],
-        "primary_case_tier": "definite",
+        "primary_case_tier": "broad",
+        "sensitivity_case_tiers": ["definite"],
         "covariate_columns": ["age_at_index", "is_female", "pc1", "pc2", "pc3", "statin_exposure"],
     }
     panel = {

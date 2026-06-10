@@ -43,7 +43,7 @@ def _write_manifest(config: ProjectConfig, paths: ProjectPaths, extra: dict[str,
 def _write_rendered_sql(config: ProjectConfig, paths: ProjectPaths) -> None:
     write_text(render_baseline_sql(config), f"{paths.cohort_sql_root}/baseline.sql")
     write_text(render_case_tier_sql(config, config.phenotype.definite), f"{paths.cohort_sql_root}/rhabdo_definite.sql")
-    write_text(render_case_tier_sql(config, config.phenotype.probable), f"{paths.cohort_sql_root}/rhabdo_probable.sql")
+    write_text(render_case_tier_sql(config, config.phenotype.broad), f"{paths.cohort_sql_root}/rhabdo_broad.sql")
     if config.phenotype.clinical_cofactors:
         write_text(render_clinical_cofactors_sql(config), f"{paths.cohort_sql_root}/clinical_cofactors.sql")
     write_text(render_covariate_sql(config), f"{paths.cohort_sql_root}/rhabdo_covariates.sql")

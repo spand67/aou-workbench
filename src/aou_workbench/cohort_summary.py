@@ -170,9 +170,12 @@ def _categorical_p_value(left: pd.Series, right: pd.Series, categories: list[str
             [int((right == category).sum()) for category in categories],
         ]
     )
-    if table.sum() == 0:
+    if table.sum() == 0 or (table.sum(axis=0) == 0).any() or (table.sum(axis=1) == 0).any():
         return np.nan
-    return float(chi2_contingency(table, correction=False)[1])
+    try:
+        return float(chi2_contingency(table, correction=False)[1])
+    except ValueError:
+        return np.nan
 
 
 def _render_markdown(summary_df: pd.DataFrame, *, has_max_unrelated: bool) -> str:

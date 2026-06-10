@@ -5,8 +5,8 @@ index_window_days: 365
 exact_match_columns:
   - is_female
   - ancestry_pred
-primary_case_tier: probable
-sensitivity_case_tiers: []
+primary_case_tier: broad
+sensitivity_case_tiers: [definite]
 covariate_columns:
   - age_at_index
   - is_female

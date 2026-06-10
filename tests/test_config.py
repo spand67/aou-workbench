@@ -19,4 +19,8 @@ class ConfigLoadingTests(unittest.TestCase):
         self.assertEqual(config.analysis.analysis_name, "unit_test_rhabdo")
         self.assertEqual(len(config.panel.a_priori_variants), 6)
         self.assertEqual(config.phenotype.definite.measurement_min, 5000)
+        self.assertEqual(config.phenotype.definite.measurement_window_start_days, -7)
+        self.assertEqual(config.phenotype.definite.measurement_window_end_days, 45)
+        self.assertEqual(config.phenotype.broad.name, "broad")
+        self.assertEqual(config.cohort.primary_case_tier, "broad")
         self.assertTrue(config.config_hash)

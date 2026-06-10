@@ -26,7 +26,10 @@ def _match_stratum_key(frame: pd.DataFrame, columns: tuple[str, ...]) -> pd.Seri
 
 
 def _prepare_matching_inputs(cohort_df: pd.DataFrame, config: ProjectConfig) -> tuple[pd.DataFrame, dict[tuple[str, ...], pd.DataFrame]]:
-    cases = cohort_df[cohort_df["case_tier"] == config.cohort.primary_case_tier].copy()
+    if config.cohort.primary_case_tier == "broad" and "broad_rhabdo_case" in cohort_df.columns:
+        cases = cohort_df[cohort_df["broad_rhabdo_case"].fillna(0).astype(int) == 1].copy()
+    else:
+        cases = cohort_df[cohort_df["case_tier"] == config.cohort.primary_case_tier].copy()
     controls = cohort_df[cohort_df["eligible_control"]].copy()
     if cases.empty or controls.empty:
         return cases, {}

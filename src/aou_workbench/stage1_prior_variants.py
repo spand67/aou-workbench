@@ -28,19 +28,24 @@ def _variant_exposure(
 
 def _stage1_comparisons(sample_df: pd.DataFrame, config: ProjectConfig) -> list[dict[str, Any]]:
     if {"rhabdo_case", "rhabdo_primary_case"}.issubset(sample_df.columns):
-        all_non_rhabdo = sample_df["rhabdo_case"].fillna(0).astype(int) == 0
+        if "eligible_control" in sample_df.columns:
+            all_non_rhabdo = sample_df["eligible_control"].fillna(False).astype(bool)
+        else:
+            all_non_rhabdo = sample_df["rhabdo_case"].fillna(0).astype(int) == 0
+        broad_cases = sample_df["rhabdo_case"].fillna(0).astype(int) == 1
+        definite_cases = sample_df["rhabdo_primary_case"].fillna(0).astype(int) == 1
         comparisons = [
             {
                 "comparison": "omop_rhabdo_vs_non_rhabdo",
-                "comparison_label": "OMOP rhabdo vs non-rhabdo",
+                "comparison_label": "Broad OMOP rhabdo vs eligible controls",
                 "outcome_column": "rhabdo_case",
-                "sample_df": sample_df[sample_df["rhabdo_case"].fillna(0).astype(int).isin([0, 1])].copy(),
+                "sample_df": sample_df[broad_cases | all_non_rhabdo].copy(),
             },
             {
                 "comparison": "omop_rhabdo_plus_ck_vs_non_rhabdo",
-                "comparison_label": "OMOP rhabdo + CK>=5000 vs non-rhabdo",
+                "comparison_label": "Definite OMOP rhabdo + CK>=5000 vs eligible controls",
                 "outcome_column": "rhabdo_primary_case",
-                "sample_df": sample_df[(sample_df["rhabdo_primary_case"].fillna(0).astype(int) == 1) | all_non_rhabdo].copy(),
+                "sample_df": sample_df[definite_cases | all_non_rhabdo].copy(),
             },
         ]
         if "ancestry_pred" in sample_df.columns:
@@ -50,7 +55,10 @@ def _stage1_comparisons(sample_df: pd.DataFrame, config: ProjectConfig) -> list[
                 if str(value).strip()
             )
             for ancestry in ancestry_values:
-                ancestry_df = sample_df[sample_df["ancestry_pred"].astype(str) == ancestry].copy()
+                ancestry_df = sample_df[
+                    (sample_df["ancestry_pred"].astype(str) == ancestry)
+                    & (broad_cases | all_non_rhabdo)
+                ].copy()
                 if ancestry_df.empty:
                     continue
                 if ancestry_df["rhabdo_case"].fillna(0).astype(int).nunique() < 2:

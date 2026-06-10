@@ -74,18 +74,17 @@ GROUP BY person_id
         if tier.measurement_min is not None
         else ""
     )
-    measurement_sql = (
+    measurement_events_sql = (
         f"""
 SELECT
   CAST(m.{config.phenotype.person_id_column} AS STRING) AS person_id,
-  MIN(DATE(m.{config.phenotype.measurement_date_column})) AS measurement_date,
-  MAX(SAFE_CAST(m.{config.phenotype.measurement_value_column} AS FLOAT64)) AS measurement_value
+  DATE(m.{config.phenotype.measurement_date_column}) AS measurement_date,
+  SAFE_CAST(m.{config.phenotype.measurement_value_column} AS FLOAT64) AS measurement_value
 FROM `{measurement_table}` m
 LEFT JOIN `{concept_table}` measurement_concept
   ON m.{config.phenotype.measurement_concept_column} = measurement_concept.concept_id
 WHERE {measurement_predicate}
   {measurement_threshold}
-GROUP BY person_id
 """.strip()
         if measurement_predicate != "FALSE"
         else _empty_result_sql(
@@ -96,20 +95,71 @@ GROUP BY person_id
             )
         )
     )
+    if tier.require_condition and tier.require_measurement:
+        return f"""
+WITH condition_events AS (
+  {condition_sql}
+),
+measurement_events AS (
+  {measurement_events_sql}
+)
+SELECT
+  condition_events.person_id,
+  condition_events.condition_date,
+  MIN(measurement_events.measurement_date) AS measurement_date,
+  MAX(measurement_events.measurement_value) AS measurement_value
+FROM condition_events
+JOIN measurement_events USING (person_id)
+WHERE DATE_DIFF(measurement_events.measurement_date, condition_events.condition_date, DAY)
+  BETWEEN {tier.measurement_window_start_days} AND {tier.measurement_window_end_days}
+GROUP BY person_id, condition_date
+""".strip()
+    if tier.require_condition and not tier.require_measurement:
+        return f"""
+WITH condition_events AS (
+  {condition_sql}
+)
+SELECT
+  condition_events.person_id,
+  condition_events.condition_date,
+  CAST(NULL AS DATE) AS measurement_date,
+  CAST(NULL AS FLOAT64) AS measurement_value
+FROM condition_events
+""".strip()
+    if tier.require_measurement and not tier.require_condition:
+        return f"""
+WITH measurement_events AS (
+  {measurement_events_sql}
+)
+SELECT
+  measurement_events.person_id,
+  CAST(NULL AS DATE) AS condition_date,
+  MIN(measurement_events.measurement_date) AS measurement_date,
+  MAX(measurement_events.measurement_value) AS measurement_value
+FROM measurement_events
+GROUP BY person_id
+""".strip()
     return f"""
 WITH condition_events AS (
   {condition_sql}
 ),
 measurement_events AS (
-  {measurement_sql}
+  {measurement_events_sql}
 )
 SELECT
-  COALESCE(condition_events.person_id, measurement_events.person_id) AS person_id,
+  COALESCE(condition_events.person_id, measurement_summary.person_id) AS person_id,
   condition_events.condition_date,
-  measurement_events.measurement_date,
-  measurement_events.measurement_value
+  measurement_summary.measurement_date,
+  measurement_summary.measurement_value
 FROM condition_events
-FULL OUTER JOIN measurement_events USING (person_id)
+FULL OUTER JOIN (
+  SELECT
+    person_id,
+    MIN(measurement_date) AS measurement_date,
+    MAX(measurement_value) AS measurement_value
+  FROM measurement_events
+  GROUP BY person_id
+) measurement_summary USING (person_id)
 """.strip()
 
 
@@ -117,6 +167,7 @@ def render_baseline_sql(config: ProjectConfig) -> str:
     cdr = config.workbench.workspace_cdr or "{{workspace_cdr}}"
     person_table = _qualify_table(cdr, config.phenotype.tables.person_table)
     observation_table = _qualify_table(cdr, config.phenotype.tables.observation_table)
+    condition_table = _qualify_table(cdr, config.phenotype.tables.condition_table)
     concept_table = _qualify_table(cdr, config.phenotype.tables.concept_table)
     return f"""
 WITH observation_windows AS (
@@ -125,6 +176,35 @@ WITH observation_windows AS (
     MIN(DATE(observation_period_start_date)) AS obs_start_date,
     MAX(DATE(observation_period_end_date)) AS obs_end_date
   FROM `{observation_table}`
+  GROUP BY person_id
+),
+condition_records AS (
+  SELECT
+    CAST(co.{config.phenotype.person_id_column} AS STRING) AS person_id,
+    DATE(co.{config.phenotype.condition_date_column}) AS condition_date,
+    UPPER(COALESCE(source_concept.vocabulary_id, '')) AS source_vocabulary_id
+  FROM `{condition_table}` co
+  LEFT JOIN `{concept_table}` source_concept
+    ON co.condition_source_concept_id = source_concept.concept_id
+  WHERE co.{config.phenotype.condition_date_column} IS NOT NULL
+),
+denominator_mode AS (
+  SELECT
+    IF(
+      COUNTIF(STARTS_WITH(source_vocabulary_id, 'ICD')) > 0,
+      'icd_source_condition_records',
+      'all_condition_records'
+    ) AS omop_condition_record_source
+  FROM condition_records
+),
+denominator_counts AS (
+  SELECT
+    condition_records.person_id,
+    COUNT(DISTINCT condition_records.condition_date) AS omop_condition_record_dates
+  FROM condition_records
+  CROSS JOIN denominator_mode
+  WHERE denominator_mode.omop_condition_record_source = 'all_condition_records'
+    OR STARTS_WITH(condition_records.source_vocabulary_id, 'ICD')
   GROUP BY person_id
 )
 SELECT
@@ -149,12 +229,18 @@ SELECT
   CAST(NULL AS FLOAT64) AS pc7,
   CAST(NULL AS FLOAT64) AS pc8,
   CAST(NULL AS FLOAT64) AS pc9,
-  CAST(NULL AS FLOAT64) AS pc10
+  CAST(NULL AS FLOAT64) AS pc10,
+  COALESCE(denominator_counts.omop_condition_record_dates, 0) AS omop_condition_record_dates,
+  denominator_mode.omop_condition_record_source,
+  COALESCE(denominator_counts.omop_condition_record_dates, 0) >= 2 AS eligible_ehr_denominator
 FROM `{person_table}` p
 LEFT JOIN observation_windows
   ON CAST(p.person_id AS STRING) = observation_windows.person_id
 LEFT JOIN `{concept_table}` g
   ON p.gender_concept_id = g.concept_id
+LEFT JOIN denominator_counts
+  ON CAST(p.person_id AS STRING) = denominator_counts.person_id
+CROSS JOIN denominator_mode
 """.strip()
 
 

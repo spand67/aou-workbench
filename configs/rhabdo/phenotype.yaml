@@ -22,12 +22,12 @@ definite:
   measurement_min: 5000
   require_condition: true
   require_measurement: true
-  lookback_days: 30
-probable:
+  measurement_window_start_days: -7
+  measurement_window_end_days: 45
+broad:
   condition_terms: [rhabdomyolysis]
   require_condition: true
   require_measurement: false
-  lookback_days: 30
 clinical_cofactors:
   - name: crush_injury
     condition_terms: [crush injury, crush syndrome]

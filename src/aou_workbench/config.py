@@ -107,6 +107,8 @@ class CaseTierRule:
     measurement_min: float | None = None
     require_condition: bool = True
     require_measurement: bool = False
+    measurement_window_start_days: int = -30
+    measurement_window_end_days: int = 30
     lookback_days: int = 30
 
 
@@ -154,15 +156,19 @@ class PhenotypeConfig:
     definite: CaseTierRule = field(
         default_factory=lambda: CaseTierRule(name="definite")
     )
-    probable: CaseTierRule = field(
+    broad: CaseTierRule = field(
         default_factory=lambda: CaseTierRule(
-            name="probable",
-            require_condition=False,
-            require_measurement=True,
+            name="broad",
+            require_condition=True,
+            require_measurement=False,
         )
     )
     control_exclusion_concept_ids: tuple[int, ...] = ()
     min_observation_days: int = 180
+
+    @property
+    def probable(self) -> CaseTierRule:
+        return self.broad
 
 
 @dataclass(frozen=True)
@@ -172,8 +178,8 @@ class CohortConfig:
     age_tolerance_years: float = 5.0
     index_window_days: int = 365
     exact_match_columns: tuple[str, ...] = ("is_female", "ancestry_pred")
-    primary_case_tier: str = "definite"
-    sensitivity_case_tiers: tuple[str, ...] = ("probable",)
+    primary_case_tier: str = "broad"
+    sensitivity_case_tiers: tuple[str, ...] = ("definite",)
     covariate_columns: tuple[str, ...] = DEFAULT_COVARIATES
     require_complete_matches: bool = False
     allow_reuse_controls: bool = False
@@ -336,6 +342,7 @@ def _load_workbench(payload: Mapping[str, Any]) -> WorkbenchConfig:
 
 def _load_case_tier(name: str, payload: Mapping[str, Any] | None) -> CaseTierRule:
     payload = payload or {}
+    lookback = int(payload.get("lookback_days", 30))
     return CaseTierRule(
         name=name,
         condition_concept_ids=_as_int_tuple(payload.get("condition_concept_ids")),
@@ -345,7 +352,9 @@ def _load_case_tier(name: str, payload: Mapping[str, Any] | None) -> CaseTierRul
         measurement_min=payload.get("measurement_min"),
         require_condition=bool(payload.get("require_condition", True)),
         require_measurement=bool(payload.get("require_measurement", False)),
-        lookback_days=int(payload.get("lookback_days", 30)),
+        measurement_window_start_days=int(payload.get("measurement_window_start_days", -lookback)),
+        measurement_window_end_days=int(payload.get("measurement_window_end_days", lookback)),
+        lookback_days=lookback,
     )
 
 
@@ -392,21 +401,25 @@ def _load_phenotype(payload: Mapping[str, Any]) -> PhenotypeConfig:
             _load_clinical_cofactor(item) for item in payload.get("clinical_cofactors", [])
         ),
         definite=_load_case_tier("definite", payload.get("definite")),
-        probable=_load_case_tier("probable", payload.get("probable")),
+        broad=_load_case_tier("broad", payload.get("broad", payload.get("probable"))),
         control_exclusion_concept_ids=_as_int_tuple(payload.get("control_exclusion_concept_ids")),
         min_observation_days=int(payload.get("min_observation_days", 180)),
     )
 
 
 def _load_cohort(payload: Mapping[str, Any]) -> CohortConfig:
+    def normalize_tier(value: str) -> str:
+        return "broad" if value == "probable" else value
+
+    sensitivity = tuple(normalize_tier(value) for value in _as_string_tuple(payload.get("sensitivity_case_tiers")))
     return CohortConfig(
         control_ratio=int(payload.get("control_ratio", 4)),
         minimum_controls=int(payload.get("minimum_controls", 1)),
         age_tolerance_years=float(payload.get("age_tolerance_years", 5.0)),
         index_window_days=int(payload.get("index_window_days", 365)),
         exact_match_columns=_as_string_tuple(payload.get("exact_match_columns")) or ("is_female", "ancestry_pred"),
-        primary_case_tier=payload.get("primary_case_tier", "definite"),
-        sensitivity_case_tiers=_as_string_tuple(payload.get("sensitivity_case_tiers")) or ("probable",),
+        primary_case_tier=normalize_tier(payload.get("primary_case_tier", "broad")),
+        sensitivity_case_tiers=sensitivity or ("definite",),
         covariate_columns=_as_string_tuple(payload.get("covariate_columns")) or DEFAULT_COVARIATES,
         require_complete_matches=bool(payload.get("require_complete_matches", False)),
         allow_reuse_controls=bool(payload.get("allow_reuse_controls", False)),
