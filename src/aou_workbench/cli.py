@@ -20,6 +20,8 @@ from .cohort_summary import (
     critical_illness_summary_path,
     matched_table1_report_path,
     matched_table1_path,
+    model_eligibility_summary_report_path,
+    model_eligibility_summary_path,
     missingness_summary_report_path,
     missingness_summary_path,
     model_split_summary_report_path,
@@ -338,6 +340,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Split Table 1 rows: {outputs['split_table1'].shape[0]}")
         print(f"Critical illness rows: {outputs['critical_illness'].shape[0]}")
         print(f"Split summary rows: {outputs['split_summary'].shape[0]}")
+        print(f"Eligibility rows: {outputs['eligibility'].shape[0]}")
         print(f"Missingness rows: {outputs['missingness'].shape[0]}")
         print(f"consort: {consort_counts_path(paths)}")
         print(f"consort_report: {consort_counts_report_path(paths)}")
@@ -349,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"critical_illness_report: {critical_illness_summary_report_path(paths)}")
         print(f"split_summary: {model_split_summary_path(paths)}")
         print(f"split_summary_report: {model_split_summary_report_path(paths)}")
+        print(f"eligibility: {model_eligibility_summary_path(paths)}")
+        print(f"eligibility_report: {model_eligibility_summary_report_path(paths)}")
         print(f"missingness: {missingness_summary_path(paths)}")
         print(f"missingness_report: {missingness_summary_report_path(paths)}")
         print(f"clinical_model_input: {clinical_model_input_path(paths)}")

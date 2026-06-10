@@ -63,6 +63,14 @@ def model_split_summary_report_path(paths: ProjectPaths) -> str:
     return join_path(paths.run_root, "cohort", "model_split_summary.md")
 
 
+def model_eligibility_summary_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "model_eligibility_summary.tsv")
+
+
+def model_eligibility_summary_report_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "model_eligibility_summary.md")
+
+
 def split_table1_path(paths: ProjectPaths) -> str:
     return join_path(paths.run_root, "cohort", "table1_clinical_by_split.tsv")
 
@@ -756,12 +764,134 @@ def build_model_split_summary(config: ProjectConfig, split_df: pd.DataFrame) -> 
     return pd.DataFrame(rows)
 
 
+def _flag_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(0, index=frame.index, dtype=int)
+    return (pd.to_numeric(frame[column], errors="coerce").fillna(0) >= 1).astype(int)
+
+
+def _any_flag(frame: pd.DataFrame, columns: tuple[str, ...]) -> pd.Series:
+    if not columns:
+        return pd.Series(0, index=frame.index, dtype=int)
+    values = pd.DataFrame({column: _flag_series(frame, column) for column in columns}, index=frame.index)
+    return (values.max(axis=1) >= 1).astype(int)
+
+
+def _matched_case_group_flag(
+    config: ProjectConfig,
+    frame: pd.DataFrame,
+    columns: tuple[str, ...],
+) -> pd.Series:
+    if frame.empty:
+        return pd.Series(dtype=int)
+    group_column = "match_group_id" if "match_group_id" in frame.columns else "person_id"
+    outcome = config.analysis.matched_outcome_column
+    outcome_values = pd.to_numeric(frame.get(outcome), errors="coerce").fillna(0)
+    case_rows = frame[outcome_values == 1].copy()
+    if case_rows.empty:
+        return pd.Series(0, index=frame.index, dtype=int)
+    case_rows["_group_flag"] = _any_flag(case_rows, columns)
+    flags_by_group = case_rows.groupby(case_rows[group_column].astype(str))["_group_flag"].max()
+    return frame[group_column].astype(str).map(flags_by_group).fillna(0).astype(int)
+
+
+def add_model_eligibility_flags(config: ProjectConfig, split_df: pd.DataFrame) -> pd.DataFrame:
+    output = split_df.copy()
+    crush_columns = ("preindex_crush_injury", "periindex_crush_injury")
+    output["row_preperi_crush_injury"] = _any_flag(output, crush_columns)
+    output["matched_case_preperi_crush_injury"] = _matched_case_group_flag(config, output, crush_columns)
+    output["row_preindex_sepsis"] = _flag_series(output, "preindex_sepsis")
+    output["row_periindex_sepsis"] = _flag_series(output, "periindex_sepsis")
+    output["matched_case_preindex_sepsis"] = _matched_case_group_flag(config, output, ("preindex_sepsis",))
+    output["matched_case_periindex_sepsis"] = _matched_case_group_flag(config, output, ("periindex_sepsis",))
+
+    required_numeric = ["age_at_index", "observation_days", "omop_condition_record_dates"]
+    numeric_complete = pd.Series(True, index=output.index)
+    for column in required_numeric:
+        if column in output.columns:
+            numeric_complete &= pd.to_numeric(output[column], errors="coerce").notna()
+        else:
+            numeric_complete &= False
+    output["clinical_model_complete_core"] = numeric_complete.astype(int)
+
+    nontraumatic = (
+        (output["row_preperi_crush_injury"] == 0)
+        & (output["matched_case_preperi_crush_injury"] == 0)
+        & (output["clinical_model_complete_core"] == 1)
+    )
+    output["nontraumatic_model_eligible"] = nontraumatic.astype(int)
+    output["primary_model_eligible"] = output["nontraumatic_model_eligible"]
+    output["sensitivity_no_periindex_sepsis_eligible"] = (
+        nontraumatic
+        & (output["row_periindex_sepsis"] == 0)
+        & (output["matched_case_periindex_sepsis"] == 0)
+    ).astype(int)
+    output["sensitivity_include_trauma_eligible"] = output["clinical_model_complete_core"]
+    return output
+
+
+def build_model_eligibility_summary(config: ProjectConfig, model_df: pd.DataFrame) -> pd.DataFrame:
+    outcome = config.analysis.matched_outcome_column
+    group_column = "match_group_id" if "match_group_id" in model_df.columns else "person_id"
+    sets = [
+        ("primary_model_eligible", "primary_nontraumatic"),
+        ("sensitivity_no_periindex_sepsis_eligible", "sensitivity_no_periindex_sepsis"),
+        ("sensitivity_include_trauma_eligible", "sensitivity_include_trauma"),
+    ]
+    splits: list[tuple[str, pd.DataFrame]] = [("all", model_df)]
+    if "analysis_split" in model_df.columns:
+        splits.extend(
+            [
+                ("train", model_df[model_df["analysis_split"] == "train"]),
+                ("test", model_df[model_df["analysis_split"] == "test"]),
+            ]
+        )
+    rows: list[dict[str, object]] = []
+    for split_label, split in splits:
+        split_outcome = pd.to_numeric(split.get(outcome), errors="coerce").fillna(0)
+        split_cases = int((split_outcome == 1).sum())
+        split_controls = int((split_outcome == 0).sum())
+        for flag, label in sets:
+            if flag not in split.columns:
+                continue
+            eligible = split[pd.to_numeric(split[flag], errors="coerce").fillna(0) == 1].copy()
+            eligible_outcome = pd.to_numeric(eligible.get(outcome), errors="coerce").fillna(0)
+            cases = int((eligible_outcome == 1).sum())
+            controls = int((eligible_outcome == 0).sum())
+            rows.append(
+                {
+                    "eligibility_set": label,
+                    "split": split_label,
+                    "n_rows": int(len(eligible)),
+                    "n_match_groups": int(eligible[group_column].astype(str).nunique()) if not eligible.empty else 0,
+                    "n_cases": cases,
+                    "n_controls": controls,
+                    "controls_per_case": f"{controls / cases:.2f}" if cases else "",
+                    "excluded_rows": int(len(split) - len(eligible)),
+                    "excluded_cases": int(split_cases - cases),
+                    "excluded_controls": int(split_controls - controls),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def _missingness_variables(frame: pd.DataFrame) -> list[str]:
     preferred = [
         "person_id",
         "analysis_case",
         "analysis_split",
         "cv_fold",
+        "primary_model_eligible",
+        "nontraumatic_model_eligible",
+        "sensitivity_no_periindex_sepsis_eligible",
+        "sensitivity_include_trauma_eligible",
+        "clinical_model_complete_core",
+        "matched_case_preperi_crush_injury",
+        "row_preperi_crush_injury",
+        "matched_case_preindex_sepsis",
+        "matched_case_periindex_sepsis",
+        "row_preindex_sepsis",
+        "row_periindex_sepsis",
         "match_group_id",
         "index_date",
         "age_at_index",
@@ -836,6 +966,8 @@ def build_split_table1(config: ProjectConfig, split_df: pd.DataFrame) -> pd.Data
 
 def build_clinical_model_input(config: ProjectConfig, split_df: pd.DataFrame) -> pd.DataFrame:
     output = split_df.copy()
+    if "primary_model_eligible" not in output.columns:
+        output = add_model_eligibility_flags(config, output)
     if _has_sex_information(output):
         output["model_sex_category"] = _sex_category_series(output)
     if "ancestry_pred" in output.columns:
@@ -845,6 +977,17 @@ def build_clinical_model_input(config: ProjectConfig, split_df: pd.DataFrame) ->
         "analysis_case",
         "analysis_split",
         "cv_fold",
+        "primary_model_eligible",
+        "nontraumatic_model_eligible",
+        "sensitivity_no_periindex_sepsis_eligible",
+        "sensitivity_include_trauma_eligible",
+        "clinical_model_complete_core",
+        "matched_case_preperi_crush_injury",
+        "row_preperi_crush_injury",
+        "matched_case_preindex_sepsis",
+        "matched_case_periindex_sepsis",
+        "row_preindex_sepsis",
+        "row_periindex_sepsis",
         "match_group_id",
         "match_role",
         "matched_case_person_id",
@@ -878,12 +1021,13 @@ def characterize_case_control_cohort(
     matched_df: pd.DataFrame,
     paths: ProjectPaths,
 ) -> dict[str, pd.DataFrame]:
-    split_df = add_model_splits(matched_df)
+    split_df = add_model_eligibility_flags(config, add_model_splits(matched_df))
     consort = build_consort_counts(built_df, matched_df)
     table1 = build_matched_table1(config, split_df)
     split_table1 = build_split_table1(config, split_df)
     critical = build_critical_illness_summary(config, built_df, split_df)
     split_summary = build_model_split_summary(config, split_df)
+    eligibility = build_model_eligibility_summary(config, split_df)
     missingness = build_missingness_summary(config, split_df)
     model_input = build_clinical_model_input(config, split_df)
 
@@ -892,6 +1036,7 @@ def characterize_case_control_cohort(
     write_dataframe(split_table1, split_table1_path(paths))
     write_dataframe(critical, critical_illness_summary_path(paths))
     write_dataframe(split_summary, model_split_summary_path(paths))
+    write_dataframe(eligibility, model_eligibility_summary_path(paths))
     write_dataframe(missingness, missingness_summary_path(paths))
     write_dataframe(model_input, clinical_model_input_path(paths))
     _write_markdown_table(consort, consort_counts_report_path(paths), "CONSORT Counts")
@@ -899,6 +1044,7 @@ def characterize_case_control_cohort(
     _write_markdown_table(split_table1, split_table1_report_path(paths), "Matched Clinical Table 1 by Split")
     _write_markdown_table(critical, critical_illness_summary_report_path(paths), "Sepsis and Renal Injury Timing Summary")
     _write_markdown_table(split_summary, model_split_summary_report_path(paths), "Model Split Summary")
+    _write_markdown_table(eligibility, model_eligibility_summary_report_path(paths), "Model Eligibility Summary")
     _write_markdown_table(missingness, missingness_summary_report_path(paths), "Matched Cohort Missingness Summary")
     report = "\n\n".join(
         [
@@ -909,6 +1055,8 @@ def characterize_case_control_cohort(
             _markdown_table(table1),
             "## Train/Test Split Summary",
             _markdown_table(split_summary),
+            "## Model Eligibility Summary",
+            _markdown_table(eligibility),
             "## Matched Clinical Table 1 by Split",
             _markdown_table(split_table1),
             "## Sepsis and Renal Injury Timing Summary",
@@ -925,6 +1073,7 @@ def characterize_case_control_cohort(
         "split_table1": split_table1,
         "critical_illness": critical,
         "split_summary": split_summary,
+        "eligibility": eligibility,
         "missingness": missingness,
         "clinical_model_input": model_input,
     }
@@ -1122,8 +1271,10 @@ def summarize_clinical_demographics(
 
 
 __all__ = [
+    "add_model_eligibility_flags",
     "add_model_splits",
     "build_clinical_model_input",
+    "build_model_eligibility_summary",
     "build_missingness_summary",
     "build_model_split_summary",
     "build_split_table1",
@@ -1140,6 +1291,8 @@ __all__ = [
     "matched_table1_report_path",
     "missingness_summary_path",
     "missingness_summary_report_path",
+    "model_eligibility_summary_path",
+    "model_eligibility_summary_report_path",
     "model_split_summary_path",
     "model_split_summary_report_path",
     "split_table1_path",
