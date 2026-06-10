@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 
 import numpy as np
@@ -46,6 +47,34 @@ def critical_illness_summary_report_path(paths: ProjectPaths) -> str:
     return join_path(paths.run_root, "cohort", "critical_illness_summary.md")
 
 
+def missingness_summary_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "missingness_summary.tsv")
+
+
+def missingness_summary_report_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "missingness_summary.md")
+
+
+def model_split_summary_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "model_split_summary.tsv")
+
+
+def model_split_summary_report_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "model_split_summary.md")
+
+
+def split_table1_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "table1_clinical_by_split.tsv")
+
+
+def split_table1_report_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "table1_clinical_by_split.md")
+
+
+def clinical_model_input_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "clinical_model_input.tsv")
+
+
 def clinical_characterization_report_path(paths: ProjectPaths) -> str:
     return join_path(paths.run_root, "cohort", "clinical_characterization_report.md")
 
@@ -54,6 +83,23 @@ _UNMATCHED_CASES = "unmatched_rhabdo_wgs"
 _UNMATCHED_CONTROLS = "unmatched_non_rhabdo_wgs"
 _MATCHED_CASES = "matched_rhabdo_wgs"
 _MATCHED_CONTROLS = "matched_controls_wgs"
+_TRAIN_FRACTION = 0.8
+_CV_FOLDS = 5
+_MISSING_LABELS = {
+    "",
+    "nan",
+    "none",
+    "null",
+    "na",
+    "n/a",
+    "missing",
+    "no matching concept",
+    "unknown",
+    "skip",
+    "pmi: skip",
+    "prefer not to answer",
+    "pmi: prefer not to answer",
+}
 
 
 def _summary_columns() -> list[str]:
@@ -93,20 +139,9 @@ def _categorical_series(frame: pd.DataFrame, column: str) -> pd.Series:
 
 def _normalize_category_values(series: pd.Series) -> pd.Series:
     normalized = series.astype(str).str.lower().str.strip()
+    normalized = normalized.replace({value: "missing" for value in _MISSING_LABELS})
     normalized = normalized.replace(
         {
-            "": "missing",
-            "nan": "missing",
-            "none": "missing",
-            "null": "missing",
-            "na": "missing",
-            "n/a": "missing",
-            "no matching concept": "missing",
-            "unknown": "missing",
-            "skip": "missing",
-            "pmi: skip": "missing",
-            "prefer not to answer": "missing",
-            "pmi: prefer not to answer": "missing",
             "f": "female",
             "2": "female",
             "m": "male",
@@ -148,6 +183,10 @@ def _ordered_categories(series_list: list[pd.Series], preferred: list[str]) -> l
     return [value for value in preferred if value in observed] + sorted(observed.difference(preferred))
 
 
+def _ensure_categories(categories: list[str], required: list[str]) -> list[str]:
+    return categories + [category for category in required if category not in categories]
+
+
 def _format_category_from_series(series: pd.Series, value: str) -> str:
     if series.empty:
         return _empty_value()
@@ -157,6 +196,30 @@ def _format_category_from_series(series: pd.Series, value: str) -> str:
 
 def _display_category(value: str) -> str:
     return value.replace("_or_", "/").replace("_", " ")
+
+
+def _category_series_with_missing(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series("missing", index=frame.index, dtype=object)
+    values = frame[column].astype("string").str.strip()
+    missing = values.isna() | values.str.lower().isin(_MISSING_LABELS)
+    return values.where(~missing, "missing").astype(str)
+
+
+def _missing_mask(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(True, index=frame.index)
+    values = frame[column]
+    mask = values.isna()
+    if pd.api.types.is_object_dtype(values) or pd.api.types.is_string_dtype(values):
+        text = values.astype("string").str.strip().str.lower()
+        mask = mask | text.isin(_MISSING_LABELS)
+    return mask
+
+
+def _stable_hash_score(value: object) -> float:
+    digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+    return int(digest[:16], 16) / float(16**16 - 1)
 
 
 def _format_mean_sd(frame: pd.DataFrame, column: str) -> str:
@@ -279,6 +342,8 @@ def _binary_p_value(left: pd.Series, right: pd.Series) -> float:
         return np.nan
     left_count = int(left.sum())
     right_count = int(right.sum())
+    if left_count == 0 and right_count == 0:
+        return np.nan
     table = np.array(
         [
             [left_count, int(len(left) - left_count)],
@@ -297,6 +362,8 @@ def _odds_ratio_ci(left: pd.Series, right: pd.Series) -> tuple[float, float, flo
     b = float(len(left) - left.sum())
     c = float(right.sum())
     d = float(len(right) - right.sum())
+    if a == 0 and c == 0:
+        return np.nan, np.nan, np.nan
     if min(a, b, c, d) == 0:
         a += 0.5
         b += 0.5
@@ -320,7 +387,8 @@ def _categorical_p_value(left: pd.Series, right: pd.Series, categories: list[str
             [int((right == category).sum()) for category in categories],
         ]
     )
-    if table.sum() == 0 or (table.sum(axis=0) == 0).any() or (table.sum(axis=1) == 0).any():
+    table = table[:, table.sum(axis=0) > 0]
+    if table.sum() == 0 or table.shape[1] < 2 or (table.sum(axis=1) == 0).any():
         return np.nan
     try:
         return float(chi2_contingency(table, correction=False)[1])
@@ -468,10 +536,8 @@ def build_matched_table1(config: ProjectConfig, matched_df: pd.DataFrame) -> pd.
     if _has_sex_information(matched_df):
         sex_cases = _sex_category_series(cases)
         sex_controls = _sex_category_series(controls)
-        sex_categories = _ordered_categories(
-            [sex_cases, sex_controls],
-            ["female", "male", "other_or_unknown", "missing"],
-        )
+        sex_required = ["female", "male", "other_or_unknown", "missing"]
+        sex_categories = _ensure_categories(_ordered_categories([sex_cases, sex_controls], sex_required), sex_required)
         rows.append(
             {
                 "section": "Demographics",
@@ -499,9 +565,13 @@ def build_matched_table1(config: ProjectConfig, matched_df: pd.DataFrame) -> pd.
 
     ancestry = "ancestry_pred"
     if ancestry in matched_df.columns:
-        categories = sorted(matched_df[ancestry].dropna().astype(str).unique().tolist())
-        left = _categorical_series(cases, ancestry)
-        right = _categorical_series(controls, ancestry)
+        left = _category_series_with_missing(cases, ancestry)
+        right = _category_series_with_missing(controls, ancestry)
+        categories = _ordered_categories(
+            [left, right],
+            ["AFR", "AMR", "EAS", "EUR", "MID", "SAS", "other", "missing"],
+        )
+        categories = _ensure_categories(categories, ["missing"])
         rows.append(
             {
                 "section": "Demographics",
@@ -516,11 +586,16 @@ def build_matched_table1(config: ProjectConfig, matched_df: pd.DataFrame) -> pd.
             }
         )
         for category in categories:
-            temp_col = f"__ancestry_{category}"
-            matched_df[temp_col] = (matched_df[ancestry].astype(str) == category).astype(int)
-            cases[temp_col] = (cases[ancestry].astype(str) == category).astype(int)
-            controls[temp_col] = (controls[ancestry].astype(str) == category).astype(int)
-            add_binary("Demographics", f"Ancestry: {category}, n (%)", temp_col)
+            left_binary = (left == category).astype(float)
+            right_binary = (right == category).astype(float)
+            add_binary_values(
+                "Demographics",
+                f"Ancestry: {category}, n (%)",
+                left_binary,
+                right_binary,
+                _format_category_from_series(left, category),
+                _format_category_from_series(right, category),
+            )
 
     clinical_columns = [
         "crush_injury",
@@ -599,22 +674,232 @@ def build_critical_illness_summary(config: ProjectConfig, built_df: pd.DataFrame
     return pd.DataFrame(rows)
 
 
+def add_model_splits(
+    matched_df: pd.DataFrame,
+    *,
+    train_fraction: float = _TRAIN_FRACTION,
+    cv_folds: int = _CV_FOLDS,
+) -> pd.DataFrame:
+    output = matched_df.copy()
+    if output.empty:
+        output["analysis_split"] = pd.Series(dtype=object)
+        output["cv_fold"] = pd.Series(dtype=object)
+        return output
+    group_column = "match_group_id" if "match_group_id" in output.columns else "person_id"
+    output["_split_group"] = output[group_column].fillna(output["person_id"]).astype(str)
+    groups = (
+        pd.DataFrame({"_split_group": output["_split_group"].drop_duplicates().tolist()})
+        .assign(_split_score=lambda frame: frame["_split_group"].map(_stable_hash_score))
+        .sort_values(["_split_score", "_split_group"])
+        .reset_index(drop=True)
+    )
+    if len(groups) <= 1:
+        groups["analysis_split"] = "train"
+    else:
+        test_fraction = max(0.0, min(1.0, 1.0 - train_fraction))
+        test_count = max(1, int(round(len(groups) * test_fraction)))
+        test_count = min(test_count, len(groups) - 1)
+        groups["analysis_split"] = "train"
+        groups.loc[: test_count - 1, "analysis_split"] = "test"
+    train_order = groups[groups["analysis_split"] == "train"].reset_index(drop=True)
+    if not train_order.empty and cv_folds > 0:
+        fold_count = min(cv_folds, len(train_order))
+        train_order["cv_fold"] = (train_order.index % fold_count) + 1
+        groups = groups.merge(train_order[["_split_group", "cv_fold"]], on="_split_group", how="left")
+    else:
+        groups["cv_fold"] = pd.NA
+    output = output.merge(groups[["_split_group", "analysis_split", "cv_fold"]], on="_split_group", how="left")
+    output = output.drop(columns=["_split_group"])
+    output["cv_fold"] = output["cv_fold"].astype("Int64")
+    return output
+
+
+def build_model_split_summary(config: ProjectConfig, split_df: pd.DataFrame) -> pd.DataFrame:
+    outcome = config.analysis.matched_outcome_column
+    rows: list[dict[str, object]] = []
+
+    def add_group(label: str, frame: pd.DataFrame) -> None:
+        if frame.empty:
+            rows.append(
+                {
+                    "group": label,
+                    "n_rows": 0,
+                    "n_match_groups": 0,
+                    "n_cases": 0,
+                    "n_controls": 0,
+                    "controls_per_case": "",
+                }
+            )
+            return
+        cases = int((pd.to_numeric(frame.get(outcome), errors="coerce").fillna(0) == 1).sum())
+        controls = int((pd.to_numeric(frame.get(outcome), errors="coerce").fillna(0) == 0).sum())
+        group_column = "match_group_id" if "match_group_id" in frame.columns else "person_id"
+        rows.append(
+            {
+                "group": label,
+                "n_rows": int(len(frame)),
+                "n_match_groups": int(frame[group_column].astype(str).nunique()),
+                "n_cases": cases,
+                "n_controls": controls,
+                "controls_per_case": f"{controls / cases:.2f}" if cases else "",
+            }
+        )
+
+    add_group("all_matched", split_df)
+    if "analysis_split" in split_df.columns:
+        for split in ("train", "test"):
+            add_group(split, split_df[split_df["analysis_split"] == split])
+    if "cv_fold" in split_df.columns:
+        train = split_df[split_df.get("analysis_split", pd.Series(index=split_df.index, dtype=object)) == "train"]
+        for fold in sorted(train["cv_fold"].dropna().astype(int).unique().tolist()):
+            add_group(f"train_cv_fold_{fold}", train[train["cv_fold"].astype("Int64") == fold])
+    return pd.DataFrame(rows)
+
+
+def _missingness_variables(frame: pd.DataFrame) -> list[str]:
+    preferred = [
+        "person_id",
+        "analysis_case",
+        "analysis_split",
+        "cv_fold",
+        "match_group_id",
+        "index_date",
+        "age_at_index",
+        "observation_days",
+        "omop_condition_record_dates",
+        "gender_concept_name",
+        "sex_category",
+        "is_female",
+        "ancestry_pred",
+        *[f"pc{i}" for i in range(1, 11)],
+        "preindex_crush_injury",
+        "preindex_sepsis",
+        "preindex_renal_injury",
+        "periindex_crush_injury",
+        "periindex_sepsis",
+        "periindex_renal_injury",
+        "postindex_sepsis",
+        "postindex_renal_injury",
+    ]
+    return [column for column in preferred if column in frame.columns]
+
+
+def build_missingness_summary(config: ProjectConfig, split_df: pd.DataFrame) -> pd.DataFrame:
+    outcome = config.analysis.matched_outcome_column
+    groups: list[tuple[str, pd.DataFrame]] = [("all_matched", split_df)]
+    if outcome in split_df.columns:
+        outcome_values = pd.to_numeric(split_df[outcome], errors="coerce")
+        groups.extend(
+            [
+                ("matched_cases", split_df[outcome_values == 1]),
+                ("matched_controls", split_df[outcome_values == 0]),
+            ]
+        )
+    if "analysis_split" in split_df.columns:
+        groups.extend(
+            [
+                ("train", split_df[split_df["analysis_split"] == "train"]),
+                ("test", split_df[split_df["analysis_split"] == "test"]),
+            ]
+        )
+    rows: list[dict[str, object]] = []
+    for variable in _missingness_variables(split_df):
+        for group_name, frame in groups:
+            n = int(len(frame))
+            missing = int(_missing_mask(frame, variable).sum()) if n else 0
+            rows.append(
+                {
+                    "variable": variable,
+                    "group": group_name,
+                    "n": n,
+                    "observed_n": n - missing,
+                    "missing_n": missing,
+                    "missing_pct": f"{(100.0 * missing / n):.1f}" if n else "",
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_split_table1(config: ProjectConfig, split_df: pd.DataFrame) -> pd.DataFrame:
+    if "analysis_split" not in split_df.columns:
+        return pd.DataFrame()
+    tables = []
+    for split in ("train", "test"):
+        subset = split_df[split_df["analysis_split"] == split].copy()
+        if subset.empty:
+            continue
+        table = build_matched_table1(config, subset)
+        table.insert(0, "analysis_split", split)
+        tables.append(table)
+    return pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
+
+
+def build_clinical_model_input(config: ProjectConfig, split_df: pd.DataFrame) -> pd.DataFrame:
+    output = split_df.copy()
+    if _has_sex_information(output):
+        output["model_sex_category"] = _sex_category_series(output)
+    if "ancestry_pred" in output.columns:
+        output["model_ancestry_pred"] = _category_series_with_missing(output, "ancestry_pred")
+    preferred = [
+        "person_id",
+        "analysis_case",
+        "analysis_split",
+        "cv_fold",
+        "match_group_id",
+        "match_role",
+        "matched_case_person_id",
+        "case_tier",
+        "index_date",
+        "age_at_index",
+        "observation_days",
+        "omop_condition_record_dates",
+        "model_sex_category",
+        "sex_category",
+        "is_female",
+        "model_ancestry_pred",
+        "ancestry_pred",
+        *[f"pc{i}" for i in range(1, 11)],
+        "preindex_crush_injury",
+        "preindex_sepsis",
+        "preindex_renal_injury",
+        "periindex_crush_injury",
+        "periindex_sepsis",
+        "periindex_renal_injury",
+        "postindex_sepsis",
+        "postindex_renal_injury",
+    ]
+    columns = [column for column in preferred if column in output.columns]
+    return output[columns].copy()
+
+
 def characterize_case_control_cohort(
     config: ProjectConfig,
     built_df: pd.DataFrame,
     matched_df: pd.DataFrame,
     paths: ProjectPaths,
 ) -> dict[str, pd.DataFrame]:
+    split_df = add_model_splits(matched_df)
     consort = build_consort_counts(built_df, matched_df)
-    table1 = build_matched_table1(config, matched_df)
-    critical = build_critical_illness_summary(config, built_df, matched_df)
+    table1 = build_matched_table1(config, split_df)
+    split_table1 = build_split_table1(config, split_df)
+    critical = build_critical_illness_summary(config, built_df, split_df)
+    split_summary = build_model_split_summary(config, split_df)
+    missingness = build_missingness_summary(config, split_df)
+    model_input = build_clinical_model_input(config, split_df)
 
     write_dataframe(consort, consort_counts_path(paths))
     write_dataframe(table1, matched_table1_path(paths))
+    write_dataframe(split_table1, split_table1_path(paths))
     write_dataframe(critical, critical_illness_summary_path(paths))
+    write_dataframe(split_summary, model_split_summary_path(paths))
+    write_dataframe(missingness, missingness_summary_path(paths))
+    write_dataframe(model_input, clinical_model_input_path(paths))
     _write_markdown_table(consort, consort_counts_report_path(paths), "CONSORT Counts")
     _write_markdown_table(table1, matched_table1_report_path(paths), "Matched Clinical Table 1")
+    _write_markdown_table(split_table1, split_table1_report_path(paths), "Matched Clinical Table 1 by Split")
     _write_markdown_table(critical, critical_illness_summary_report_path(paths), "Sepsis and Renal Injury Timing Summary")
+    _write_markdown_table(split_summary, model_split_summary_report_path(paths), "Model Split Summary")
+    _write_markdown_table(missingness, missingness_summary_report_path(paths), "Matched Cohort Missingness Summary")
     report = "\n\n".join(
         [
             "# Clinical Cohort Characterization",
@@ -622,13 +907,27 @@ def characterize_case_control_cohort(
             _markdown_table(consort),
             "## Matched Clinical Table 1",
             _markdown_table(table1),
+            "## Train/Test Split Summary",
+            _markdown_table(split_summary),
+            "## Matched Clinical Table 1 by Split",
+            _markdown_table(split_table1),
             "## Sepsis and Renal Injury Timing Summary",
             _markdown_table(critical),
+            "## Missingness Summary",
+            _markdown_table(missingness),
             "",
         ]
     )
     write_text(report, clinical_characterization_report_path(paths))
-    return {"consort": consort, "table1": table1, "critical_illness": critical}
+    return {
+        "consort": consort,
+        "table1": table1,
+        "split_table1": split_table1,
+        "critical_illness": critical,
+        "split_summary": split_summary,
+        "missingness": missingness,
+        "clinical_model_input": model_input,
+    }
 
 
 def summarize_clinical_demographics(
@@ -696,9 +995,13 @@ def summarize_clinical_demographics(
         unmatched_sex_right = _sex_category_series(groups[_UNMATCHED_CONTROLS])
         matched_sex_left = _sex_category_series(groups[_MATCHED_CASES])
         matched_sex_right = _sex_category_series(groups[_MATCHED_CONTROLS])
-        sex_values = _ordered_categories(
-            [unmatched_sex_left, unmatched_sex_right, matched_sex_left, matched_sex_right],
-            ["female", "male", "other_or_unknown", "missing"],
+        sex_required = ["female", "male", "other_or_unknown", "missing"]
+        sex_values = _ensure_categories(
+            _ordered_categories(
+                [unmatched_sex_left, unmatched_sex_right, matched_sex_left, matched_sex_right],
+                sex_required,
+            ),
+            sex_required,
         )
         add_row(
             "Demographics",
@@ -737,25 +1040,15 @@ def summarize_clinical_demographics(
                 ),
             )
 
-    ancestry_values = sorted(
-        {
-            value
-            for value in pd.concat(
-                [
-                    groups[_UNMATCHED_CASES].get("ancestry_pred", pd.Series(dtype=object)).astype(str),
-                    groups[_UNMATCHED_CONTROLS].get("ancestry_pred", pd.Series(dtype=object)).astype(str),
-                    groups[_MATCHED_CASES].get("ancestry_pred", pd.Series(dtype=object)).astype(str),
-                    groups[_MATCHED_CONTROLS].get("ancestry_pred", pd.Series(dtype=object)).astype(str),
-                ],
-                ignore_index=True,
-            ).dropna()
-            if str(value).strip()
-        }
+    unmatched_ancestry_left = _category_series_with_missing(groups[_UNMATCHED_CASES], "ancestry_pred")
+    unmatched_ancestry_right = _category_series_with_missing(groups[_UNMATCHED_CONTROLS], "ancestry_pred")
+    matched_ancestry_left = _category_series_with_missing(groups[_MATCHED_CASES], "ancestry_pred")
+    matched_ancestry_right = _category_series_with_missing(groups[_MATCHED_CONTROLS], "ancestry_pred")
+    ancestry_values = _ordered_categories(
+        [unmatched_ancestry_left, unmatched_ancestry_right, matched_ancestry_left, matched_ancestry_right],
+        ["AFR", "AMR", "EAS", "EUR", "MID", "SAS", "other", "missing"],
     )
-    unmatched_ancestry_left = _categorical_series(groups[_UNMATCHED_CASES], "ancestry_pred")
-    unmatched_ancestry_right = _categorical_series(groups[_UNMATCHED_CONTROLS], "ancestry_pred")
-    matched_ancestry_left = _categorical_series(groups[_MATCHED_CASES], "ancestry_pred")
-    matched_ancestry_right = _categorical_series(groups[_MATCHED_CONTROLS], "ancestry_pred")
+    ancestry_values = _ensure_categories(ancestry_values, ["missing"])
     add_row(
         "Demographics",
         "Ancestry distribution, overall",
@@ -773,7 +1066,10 @@ def summarize_clinical_demographics(
         add_row(
             "Demographics",
             f"Ancestry: {ancestry}, n (%)",
-            lambda frame, ancestry=ancestry: _format_category(frame, "ancestry_pred", ancestry),
+            lambda frame, ancestry=ancestry: _format_category_from_series(
+                _category_series_with_missing(frame, "ancestry_pred"),
+                ancestry,
+            ),
             unmatched_metrics=(
                 _binary_smd(
                     (unmatched_ancestry_left == ancestry).astype(float),
@@ -826,7 +1122,13 @@ def summarize_clinical_demographics(
 
 
 __all__ = [
+    "add_model_splits",
+    "build_clinical_model_input",
+    "build_missingness_summary",
+    "build_model_split_summary",
+    "build_split_table1",
     "characterize_case_control_cohort",
+    "clinical_model_input_path",
     "clinical_characterization_report_path",
     "consort_counts_path",
     "consort_counts_report_path",
@@ -836,5 +1138,11 @@ __all__ = [
     "critical_illness_summary_report_path",
     "matched_table1_path",
     "matched_table1_report_path",
+    "missingness_summary_path",
+    "missingness_summary_report_path",
+    "model_split_summary_path",
+    "model_split_summary_report_path",
+    "split_table1_path",
+    "split_table1_report_path",
     "summarize_clinical_demographics",
 ]

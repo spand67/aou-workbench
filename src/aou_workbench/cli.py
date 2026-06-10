@@ -10,6 +10,7 @@ from .config import load_project_config
 from .cohort import apply_time_anchored_clinical_cofactors
 from .cohort_summary import (
     characterize_case_control_cohort,
+    clinical_model_input_path,
     clinical_characterization_report_path,
     cohort_summary_report_path,
     cohort_summary_table_path,
@@ -19,6 +20,12 @@ from .cohort_summary import (
     critical_illness_summary_path,
     matched_table1_report_path,
     matched_table1_path,
+    missingness_summary_report_path,
+    missingness_summary_path,
+    model_split_summary_report_path,
+    model_split_summary_path,
+    split_table1_report_path,
+    split_table1_path,
     summarize_clinical_demographics,
 )
 from .gwas_workflow import prepare_terminal_gwas_workspace
@@ -328,13 +335,23 @@ def main(argv: list[str] | None = None) -> int:
         outputs = characterize_case_control_cohort(effective, cohort_df, matched_df, paths)
         print(f"CONSORT rows: {outputs['consort'].shape[0]}")
         print(f"Table 1 rows: {outputs['table1'].shape[0]}")
+        print(f"Split Table 1 rows: {outputs['split_table1'].shape[0]}")
         print(f"Critical illness rows: {outputs['critical_illness'].shape[0]}")
+        print(f"Split summary rows: {outputs['split_summary'].shape[0]}")
+        print(f"Missingness rows: {outputs['missingness'].shape[0]}")
         print(f"consort: {consort_counts_path(paths)}")
         print(f"consort_report: {consort_counts_report_path(paths)}")
         print(f"table1: {matched_table1_path(paths)}")
         print(f"table1_report: {matched_table1_report_path(paths)}")
+        print(f"split_table1: {split_table1_path(paths)}")
+        print(f"split_table1_report: {split_table1_report_path(paths)}")
         print(f"critical_illness: {critical_illness_summary_path(paths)}")
         print(f"critical_illness_report: {critical_illness_summary_report_path(paths)}")
+        print(f"split_summary: {model_split_summary_path(paths)}")
+        print(f"split_summary_report: {model_split_summary_report_path(paths)}")
+        print(f"missingness: {missingness_summary_path(paths)}")
+        print(f"missingness_report: {missingness_summary_report_path(paths)}")
+        print(f"clinical_model_input: {clinical_model_input_path(paths)}")
         print(f"report: {clinical_characterization_report_path(paths)}")
         return 0
 
