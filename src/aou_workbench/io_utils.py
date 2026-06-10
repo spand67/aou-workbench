@@ -106,16 +106,16 @@ def read_table(path: str) -> pd.DataFrame:
         resolved = _resolve_gcs_path(path)
         suffix = resolved.lower()
         if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz") or suffix.endswith(".txt"):
-            return pd.read_csv(io.StringIO(_gsutil_cat(resolved)), sep="\t")
+            return pd.read_csv(io.StringIO(_gsutil_cat(resolved)), sep="\t", low_memory=False)
         if suffix.endswith(".csv") or suffix.endswith(".csv.gz"):
-            return pd.read_csv(io.StringIO(_gsutil_cat(resolved)))
+            return pd.read_csv(io.StringIO(_gsutil_cat(resolved)), low_memory=False)
         raise ValueError(f"Unsupported remote table format: {resolved}")
     if suffix.endswith(".parquet"):
         return pd.read_parquet(path)
     if suffix.endswith(".tsv") or suffix.endswith(".tsv.gz") or suffix.endswith(".bgz") or suffix.endswith(".txt"):
-        return pd.read_csv(path, sep="\t")
+        return pd.read_csv(path, sep="\t", low_memory=False)
     if suffix.endswith(".csv") or suffix.endswith(".csv.gz"):
-        return pd.read_csv(path)
+        return pd.read_csv(path, low_memory=False)
     raise ValueError(f"Unsupported table format: {path}")
 
 
