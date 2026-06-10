@@ -21,6 +21,8 @@ from .clinical_model import (
 from .config import load_project_config
 from .cohort import apply_time_anchored_clinical_cofactors
 from .cohort_summary import (
+    case_cofactor_prior_timing_path,
+    case_cofactor_prior_timing_report_path,
     characterize_case_control_cohort,
     clinical_model_input_path,
     clinical_characterization_report_path,
@@ -368,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Table 1 rows: {outputs['table1'].shape[0]}")
         print(f"Split Table 1 rows: {outputs['split_table1'].shape[0]}")
         print(f"Critical illness rows: {outputs['critical_illness'].shape[0]}")
+        print(f"Case cofactor prior timing rows: {outputs['case_cofactor_prior_timing'].shape[0]}")
         print(f"Split summary rows: {outputs['split_summary'].shape[0]}")
         print(f"Eligibility rows: {outputs['eligibility'].shape[0]}")
         print(f"Missingness rows: {outputs['missingness'].shape[0]}")
@@ -379,6 +382,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"split_table1_report: {split_table1_report_path(paths)}")
         print(f"critical_illness: {critical_illness_summary_path(paths)}")
         print(f"critical_illness_report: {critical_illness_summary_report_path(paths)}")
+        print(f"case_cofactor_prior_timing: {case_cofactor_prior_timing_path(paths)}")
+        print(f"case_cofactor_prior_timing_report: {case_cofactor_prior_timing_report_path(paths)}")
         print(f"split_summary: {model_split_summary_path(paths)}")
         print(f"split_summary_report: {model_split_summary_report_path(paths)}")
         print(f"eligibility: {model_eligibility_summary_path(paths)}")

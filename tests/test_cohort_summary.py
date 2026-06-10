@@ -9,7 +9,9 @@ from aou_workbench.config import load_project_config
 from aou_workbench.cohort_summary import (
     add_model_eligibility_flags,
     add_model_splits,
+    build_case_cofactor_prior_timing_summary,
     build_matched_table1,
+    case_cofactor_prior_timing_path,
     characterize_case_control_cohort,
     clinical_model_input_path,
     clinical_characterization_report_path,
@@ -90,6 +92,7 @@ class CohortSummaryTests(unittest.TestCase):
         self.assertTrue(Path(consort_counts_path(output_paths)).exists())
         self.assertTrue(Path(matched_table1_path(output_paths)).exists())
         self.assertTrue(Path(critical_illness_summary_path(output_paths)).exists())
+        self.assertTrue(Path(case_cofactor_prior_timing_path(output_paths)).exists())
         self.assertTrue(Path(split_table1_path(output_paths)).exists())
         self.assertTrue(Path(model_split_summary_path(output_paths)).exists())
         self.assertTrue(Path(model_eligibility_summary_path(output_paths)).exists())
@@ -97,6 +100,7 @@ class CohortSummaryTests(unittest.TestCase):
         self.assertTrue(Path(clinical_model_input_path(output_paths)).exists())
         self.assertTrue(Path(clinical_characterization_report_path(output_paths)).exists())
         self.assertIn("periindex_sepsis", set(outputs["critical_illness"]["variable"]))
+        self.assertFalse(outputs["case_cofactor_prior_timing"].empty)
         self.assertIn("ci_95", outputs["table1"].columns)
         self.assertIn("missing", set(outputs["table1"]["variable"].str.extract(r"Ancestry: (.*), n", expand=False).dropna()))
         self.assertIn("train", set(outputs["split_summary"]["group"]))
@@ -105,6 +109,37 @@ class CohortSummaryTests(unittest.TestCase):
         self.assertIn("age_at_index", set(outputs["missingness"]["variable"]))
         self.assertIn("analysis_split", outputs["clinical_model_input"].columns)
         self.assertIn("primary_model_eligible", outputs["clinical_model_input"].columns)
+
+    def test_case_cofactor_prior_timing_bins_nearest_prior_events(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        effective, _, cohort_df = build_cohort_artifacts(config)
+        _, _, matched_df = match_controls_artifacts(effective, cohort_df)
+
+        timing = build_case_cofactor_prior_timing_summary(effective, cohort_df, matched_df)
+        built = timing[timing["group"] == "built_broad_cases"]
+        renal_near = built[
+            (built["cofactor"] == "renal_injury")
+            & (built["window"] == "1_to_7_days_before")
+        ].iloc[0]
+        sepsis_remote = built[
+            (built["cofactor"] == "sepsis")
+            & (built["window"] == "91_to_365_days_before")
+        ].iloc[0]
+        sepsis_any = built[
+            (built["cofactor"] == "sepsis")
+            & (built["window"] == "any_prior")
+        ].iloc[0]
+
+        self.assertEqual(int(renal_near["n_cases_in_window"]), 1)
+        self.assertEqual(int(sepsis_remote["n_cases_in_window"]), 1)
+        self.assertEqual(float(sepsis_any["median_days_before_index"]), 104.0)
 
     def test_model_split_keeps_matched_groups_together(self) -> None:
         matched = pd.DataFrame(

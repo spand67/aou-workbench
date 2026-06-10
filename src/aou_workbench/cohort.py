@@ -418,6 +418,12 @@ def _clinical_cofactor_events_bigquery(config: ProjectConfig) -> pd.DataFrame:
     return events.dropna(subset=["condition_date"]).drop_duplicates()
 
 
+def load_clinical_cofactor_events(config: ProjectConfig) -> pd.DataFrame:
+    if config.phenotype.tables.cohort_table:
+        return _clinical_cofactor_events_local(config)
+    return _clinical_cofactor_events_bigquery(config)
+
+
 def _cofactor_ever_frame(config: ProjectConfig, events: pd.DataFrame) -> pd.DataFrame:
     names = [rule.name for rule in config.phenotype.clinical_cofactors]
     if not names:
@@ -754,4 +760,5 @@ __all__ = [
     "apply_time_anchored_clinical_cofactors",
     "build_rhabdo_cohort",
     "cohort_qc_summary",
+    "load_clinical_cofactor_events",
 ]

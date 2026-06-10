@@ -10,6 +10,7 @@ import pandas as pd
 from scipy.stats import chi2_contingency, fisher_exact, t, ttest_ind
 
 from .config import ProjectConfig
+from .cohort import load_clinical_cofactor_events
 from .io_utils import write_dataframe, write_text
 from .paths import ProjectPaths, join_path
 from .sample_restriction import restrict_frame_for_gwas
@@ -45,6 +46,14 @@ def critical_illness_summary_path(paths: ProjectPaths) -> str:
 
 def critical_illness_summary_report_path(paths: ProjectPaths) -> str:
     return join_path(paths.run_root, "cohort", "critical_illness_summary.md")
+
+
+def case_cofactor_prior_timing_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "case_cofactor_prior_timing.tsv")
+
+
+def case_cofactor_prior_timing_report_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "case_cofactor_prior_timing.md")
 
 
 def missingness_summary_path(paths: ProjectPaths) -> str:
@@ -93,6 +102,14 @@ _MATCHED_CASES = "matched_rhabdo_wgs"
 _MATCHED_CONTROLS = "matched_controls_wgs"
 _TRAIN_FRACTION = 0.8
 _CV_FOLDS = 5
+_PRIOR_TIMING_BINS = [
+    ("same_day", 0, 0),
+    ("1_to_7_days_before", 1, 7),
+    ("8_to_30_days_before", 8, 30),
+    ("31_to_90_days_before", 31, 90),
+    ("91_to_365_days_before", 91, 365),
+    ("more_than_365_days_before", 366, None),
+]
 _MISSING_LABELS = {
     "",
     "nan",
@@ -682,6 +699,116 @@ def build_critical_illness_summary(config: ProjectConfig, built_df: pd.DataFrame
     return pd.DataFrame(rows)
 
 
+def _quantile_text(values: pd.Series, q: float) -> str:
+    if values.empty:
+        return ""
+    return f"{float(values.quantile(q)):.1f}"
+
+
+def _case_index_frame(config: ProjectConfig, frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "person_id" not in frame.columns or "index_date" not in frame.columns:
+        return pd.DataFrame(columns=["person_id", "index_date"])
+    outcome = config.analysis.matched_outcome_column
+    if outcome in frame.columns:
+        case_mask = pd.to_numeric(frame[outcome], errors="coerce").fillna(0) == 1
+    elif "broad_rhabdo_case" in frame.columns:
+        case_mask = pd.to_numeric(frame["broad_rhabdo_case"], errors="coerce").fillna(0) == 1
+    else:
+        case_mask = pd.Series(False, index=frame.index)
+    cases = frame[case_mask][["person_id", "index_date"]].copy()
+    cases["person_id"] = cases["person_id"].astype(str)
+    cases["index_date"] = pd.to_datetime(cases["index_date"], errors="coerce")
+    return cases.dropna(subset=["index_date"]).drop_duplicates("person_id")
+
+
+def _empty_prior_timing_row(
+    group: str,
+    cofactor: str,
+    window: str,
+    n_cases: int,
+    n_cases_with_prior: int,
+    n_cases_in_window: int,
+) -> dict[str, object]:
+    pct_all = f"{(100.0 * n_cases_in_window / n_cases):.1f}" if n_cases else ""
+    pct_prior = f"{(100.0 * n_cases_in_window / n_cases_with_prior):.1f}" if n_cases_with_prior else ""
+    return {
+        "group": group,
+        "cofactor": cofactor,
+        "timing_basis": "nearest_prior_event_per_case",
+        "window": window,
+        "n_cases": n_cases,
+        "n_cases_with_prior_event": n_cases_with_prior,
+        "n_cases_in_window": n_cases_in_window,
+        "pct_of_all_cases": pct_all,
+        "pct_of_cases_with_prior_event": pct_prior,
+        "median_days_before_index": "",
+        "q1_days_before_index": "",
+        "q3_days_before_index": "",
+    }
+
+
+def build_case_cofactor_prior_timing_summary(
+    config: ProjectConfig,
+    built_df: pd.DataFrame,
+    matched_df: pd.DataFrame,
+    events: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    cofactor_names = {rule.name for rule in config.phenotype.clinical_cofactors}
+    targets = [name for name in ("sepsis", "renal_injury") if name in cofactor_names]
+    if not targets:
+        return pd.DataFrame()
+    events = load_clinical_cofactor_events(config) if events is None else events.copy()
+    groups = {
+        "built_broad_cases": _case_index_frame(config, built_df),
+        "matched_cases": _case_index_frame(config, matched_df),
+    }
+    if events.empty:
+        rows = []
+        for group, cases in groups.items():
+            n_cases = int(cases["person_id"].nunique())
+            for cofactor in targets:
+                rows.append(_empty_prior_timing_row(group, cofactor, "any_prior", n_cases, 0, 0))
+                for window, _, _ in _PRIOR_TIMING_BINS:
+                    rows.append(_empty_prior_timing_row(group, cofactor, window, n_cases, 0, 0))
+        return pd.DataFrame(rows)
+    events = events.copy()
+    events["person_id"] = events["person_id"].astype(str)
+    events["cofactor"] = events["cofactor"].astype(str)
+    events["condition_date"] = pd.to_datetime(events["condition_date"], errors="coerce")
+    events = events[events["cofactor"].isin(targets)].dropna(subset=["condition_date"]).copy()
+    rows: list[dict[str, object]] = []
+    for group_name, cases in groups.items():
+        n_cases = int(cases["person_id"].nunique()) if "person_id" in cases.columns else 0
+        for cofactor in targets:
+            subset = events[events["cofactor"] == cofactor].merge(cases, on="person_id", how="inner")
+            if subset.empty:
+                rows.append(_empty_prior_timing_row(group_name, cofactor, "any_prior", n_cases, 0, 0))
+                for window, _, _ in _PRIOR_TIMING_BINS:
+                    rows.append(_empty_prior_timing_row(group_name, cofactor, window, n_cases, 0, 0))
+                continue
+            subset["days_before_index"] = (subset["index_date"] - subset["condition_date"]).dt.days
+            prior = subset[subset["days_before_index"] >= 0].copy()
+            nearest = (
+                prior.sort_values(["person_id", "days_before_index"])
+                .drop_duplicates("person_id", keep="first")
+                .copy()
+            )
+            days = pd.to_numeric(nearest.get("days_before_index"), errors="coerce").dropna()
+            n_prior = int(nearest["person_id"].nunique()) if not nearest.empty else 0
+            any_row = _empty_prior_timing_row(group_name, cofactor, "any_prior", n_cases, n_prior, n_prior)
+            any_row["median_days_before_index"] = _quantile_text(days, 0.5)
+            any_row["q1_days_before_index"] = _quantile_text(days, 0.25)
+            any_row["q3_days_before_index"] = _quantile_text(days, 0.75)
+            rows.append(any_row)
+            for window, low, high in _PRIOR_TIMING_BINS:
+                mask = days >= low
+                if high is not None:
+                    mask &= days <= high
+                count = int(mask.sum())
+                rows.append(_empty_prior_timing_row(group_name, cofactor, window, n_cases, n_prior, count))
+    return pd.DataFrame(rows)
+
+
 def add_model_splits(
     matched_df: pd.DataFrame,
     *,
@@ -1026,6 +1153,7 @@ def characterize_case_control_cohort(
     table1 = build_matched_table1(config, split_df)
     split_table1 = build_split_table1(config, split_df)
     critical = build_critical_illness_summary(config, built_df, split_df)
+    prior_timing = build_case_cofactor_prior_timing_summary(config, built_df, split_df)
     split_summary = build_model_split_summary(config, split_df)
     eligibility = build_model_eligibility_summary(config, split_df)
     missingness = build_missingness_summary(config, split_df)
@@ -1035,6 +1163,7 @@ def characterize_case_control_cohort(
     write_dataframe(table1, matched_table1_path(paths))
     write_dataframe(split_table1, split_table1_path(paths))
     write_dataframe(critical, critical_illness_summary_path(paths))
+    write_dataframe(prior_timing, case_cofactor_prior_timing_path(paths))
     write_dataframe(split_summary, model_split_summary_path(paths))
     write_dataframe(eligibility, model_eligibility_summary_path(paths))
     write_dataframe(missingness, missingness_summary_path(paths))
@@ -1043,6 +1172,7 @@ def characterize_case_control_cohort(
     _write_markdown_table(table1, matched_table1_report_path(paths), "Matched Clinical Table 1")
     _write_markdown_table(split_table1, split_table1_report_path(paths), "Matched Clinical Table 1 by Split")
     _write_markdown_table(critical, critical_illness_summary_report_path(paths), "Sepsis and Renal Injury Timing Summary")
+    _write_markdown_table(prior_timing, case_cofactor_prior_timing_report_path(paths), "Case Cofactor Prior Timing")
     _write_markdown_table(split_summary, model_split_summary_report_path(paths), "Model Split Summary")
     _write_markdown_table(eligibility, model_eligibility_summary_report_path(paths), "Model Eligibility Summary")
     _write_markdown_table(missingness, missingness_summary_report_path(paths), "Matched Cohort Missingness Summary")
@@ -1061,6 +1191,8 @@ def characterize_case_control_cohort(
             _markdown_table(split_table1),
             "## Sepsis and Renal Injury Timing Summary",
             _markdown_table(critical),
+            "## Case Cofactor Prior Timing",
+            _markdown_table(prior_timing),
             "## Missingness Summary",
             _markdown_table(missingness),
             "",
@@ -1072,6 +1204,7 @@ def characterize_case_control_cohort(
         "table1": table1,
         "split_table1": split_table1,
         "critical_illness": critical,
+        "case_cofactor_prior_timing": prior_timing,
         "split_summary": split_summary,
         "eligibility": eligibility,
         "missingness": missingness,
@@ -1273,12 +1406,15 @@ def summarize_clinical_demographics(
 __all__ = [
     "add_model_eligibility_flags",
     "add_model_splits",
+    "build_case_cofactor_prior_timing_summary",
     "build_clinical_model_input",
     "build_model_eligibility_summary",
     "build_missingness_summary",
     "build_model_split_summary",
     "build_split_table1",
     "characterize_case_control_cohort",
+    "case_cofactor_prior_timing_path",
+    "case_cofactor_prior_timing_report_path",
     "clinical_model_input_path",
     "clinical_characterization_report_path",
     "consort_counts_path",
