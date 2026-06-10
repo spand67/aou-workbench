@@ -261,9 +261,9 @@ def _window_defs_sql(windows: tuple[int | None, ...]) -> str:
     values = []
     for days in windows:
         if days is None:
-            values.append("STRUCT('any_prior' AS window, CAST(NULL AS INT64) AS days)")
+            values.append("STRUCT('any_prior' AS window_label, CAST(NULL AS INT64) AS days)")
         else:
-            values.append(f"STRUCT('{days}d' AS window, {days} AS days)")
+            values.append(f"STRUCT('{days}d' AS window_label, {days} AS days)")
     return "window_defs AS (\n  SELECT * FROM UNNEST([\n    " + ",\n    ".join(values) + "\n  ])\n)"
 
 
@@ -309,23 +309,41 @@ events AS (
   LEFT JOIN `{concept_table}` concept
     ON e.{concept_column} = concept.concept_id
   WHERE DATE(e.{date_column}) < c.index_date
+),
+grouped AS (
+  SELECT
+    '{domain}' AS domain,
+    window_defs.window_label,
+    events.concept_id,
+    COALESCE(events.concept_name, events.concept_id) AS concept_name,
+    COUNT(DISTINCT events.person_id) AS n_cases,
+    COUNT(*) AS total_events,
+    APPROX_QUANTILES(events.days_before_index, 2)[OFFSET(1)] AS median_days_before_index
+  FROM events
+  JOIN window_defs
+    ON window_defs.days IS NULL OR events.days_before_index BETWEEN 1 AND window_defs.days
+  GROUP BY domain, window_defs.window_label, events.concept_id, concept_name
+),
+ranked AS (
+  SELECT
+    *,
+    ROW_NUMBER() OVER (
+      PARTITION BY window_label
+      ORDER BY n_cases DESC, total_events DESC, concept_name
+    ) AS rank_in_window
+  FROM grouped
 )
 SELECT
-  '{domain}' AS domain,
-  window_defs.window,
-  events.concept_id,
-  COALESCE(events.concept_name, events.concept_id) AS concept_name,
-  COUNT(DISTINCT events.person_id) AS n_cases,
-  COUNT(*) AS total_events,
-  APPROX_QUANTILES(events.days_before_index, 2)[OFFSET(1)] AS median_days_before_index
-FROM events
-JOIN window_defs
-  ON window_defs.days IS NULL OR events.days_before_index BETWEEN 1 AND window_defs.days
-GROUP BY domain, window_defs.window, events.concept_id, concept_name
-QUALIFY ROW_NUMBER() OVER (
-  PARTITION BY window_defs.window
-  ORDER BY n_cases DESC, total_events DESC, concept_name
-) <= {top_n}
+  domain,
+  window_label AS `window`,
+  concept_id,
+  concept_name,
+  n_cases,
+  total_events,
+  median_days_before_index
+FROM ranked
+WHERE rank_in_window <= {top_n}
+ORDER BY `window`, n_cases DESC, total_events DESC, concept_name
 """.strip()
 
 
@@ -361,17 +379,17 @@ events AS (
 ),
 per_person AS (
   SELECT
-    window_defs.window,
+    window_defs.window_label,
     events.person_id,
     COUNT(*) AS event_count
   FROM events
   JOIN window_defs
     ON window_defs.days IS NULL OR events.days_before_index BETWEEN 1 AND window_defs.days
-  GROUP BY window_defs.window, events.person_id
+  GROUP BY window_defs.window_label, events.person_id
 )
 SELECT
   '{domain}' AS domain,
-  window_defs.window,
+  window_defs.window_label AS `window`,
   {n_cases} AS n_cases,
   COUNT(per_person.person_id) AS n_cases_with_any,
   ROUND(100 * COUNT(per_person.person_id) / {n_cases}, 2) AS pct_cases_with_any,
@@ -379,9 +397,9 @@ SELECT
   APPROX_QUANTILES(per_person.event_count, 2 IGNORE NULLS)[OFFSET(1)] AS median_events_per_case_with_any
 FROM window_defs
 LEFT JOIN per_person
-  ON window_defs.window = per_person.window
-GROUP BY window_defs.window
-ORDER BY window_defs.window
+  ON window_defs.window_label = per_person.window_label
+GROUP BY window_defs.window_label
+ORDER BY window_defs.window_label
 """.strip()
 
 
@@ -417,7 +435,7 @@ events AS (
 )
 SELECT
   biomarker_terms.biomarker,
-  window_defs.window,
+  window_defs.window_label AS `window`,
   {cases['person_id'].nunique()} AS n_cases,
   COUNT(DISTINCT events.person_id) AS n_cases_with_measurement,
   ROUND(100 * COUNT(DISTINCT events.person_id) / {cases['person_id'].nunique()}, 2) AS pct_cases_with_measurement,
@@ -428,8 +446,8 @@ JOIN biomarker_terms
   ON LOWER(COALESCE(events.concept_name, '')) LIKE CONCAT('%', biomarker_terms.term, '%')
 JOIN window_defs
   ON window_defs.days IS NULL OR events.days_before_index BETWEEN 1 AND window_defs.days
-GROUP BY biomarker_terms.biomarker, window_defs.window
-ORDER BY biomarker_terms.biomarker, window_defs.window
+GROUP BY biomarker_terms.biomarker, window_defs.window_label
+ORDER BY biomarker_terms.biomarker, window_defs.window_label
 """.strip()
 
 

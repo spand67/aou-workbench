@@ -174,9 +174,12 @@ class PreindexProfileTests(unittest.TestCase):
 
         sql_root = Path(preindex_profile.preindex_case_profile_root(output_paths)) / "sql"
         condition_sql = (sql_root / "top_conditions.sql").read_text(encoding="utf-8")
+        condition_summary_sql = (sql_root / "condition_summary.sql").read_text(encoding="utf-8")
         biomarker_sql = (sql_root / "biomarker_availability.sql").read_text(encoding="utf-8")
         self.assertIn("`test-project.C2024Q3R9.condition_occurrence`", condition_sql)
-        self.assertIn("STRUCT('365d' AS window, 365 AS days)", condition_sql)
+        self.assertIn("STRUCT('365d' AS window_label, 365 AS days)", condition_sql)
+        self.assertIn("window_label AS `window`", condition_summary_sql)
+        self.assertNotIn(" AS window,", condition_sql)
         self.assertIn("ROW_NUMBER() OVER", condition_sql)
         self.assertIn("`test-project.C2024Q3R9.measurement`", biomarker_sql)
         self.assertIn("biomarker_terms", biomarker_sql)
