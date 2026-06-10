@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 from collections.abc import Callable
 
 import numpy as np
@@ -54,6 +55,10 @@ def case_cofactor_prior_timing_path(paths: ProjectPaths) -> str:
 
 def case_cofactor_prior_timing_report_path(paths: ProjectPaths) -> str:
     return join_path(paths.run_root, "cohort", "case_cofactor_prior_timing.md")
+
+
+def case_cofactor_prior_timing_histogram_path(paths: ProjectPaths) -> str:
+    return join_path(paths.run_root, "cohort", "case_cofactor_prior_timing_histogram.svg")
 
 
 def missingness_summary_path(paths: ProjectPaths) -> str:
@@ -705,6 +710,44 @@ def _quantile_text(values: pd.Series, q: float) -> str:
     return f"{float(values.quantile(q)):.1f}"
 
 
+def _svg_text(value: object) -> str:
+    return html.escape(str(value), quote=True)
+
+
+def _prior_timing_placeholder_svg(message: str) -> str:
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="240">'
+        '<rect width="100%" height="100%" fill="#fffdf7" />'
+        '<text x="40" y="80" font-size="26" font-family="Menlo, monospace">'
+        "Case Cofactor Prior Timing"
+        "</text>"
+        f'<text x="40" y="130" font-size="16" font-family="Menlo, monospace">{_svg_text(message)}</text>'
+        "</svg>"
+    )
+
+
+def _prior_window_label(window: str) -> str:
+    return {
+        "same_day": "0",
+        "1_to_7_days_before": "1-7",
+        "8_to_30_days_before": "8-30",
+        "31_to_90_days_before": "31-90",
+        "91_to_365_days_before": "91-365",
+        "more_than_365_days_before": ">365",
+    }.get(window, window)
+
+
+def _prior_group_label(group: str) -> str:
+    return {
+        "built_broad_cases": "Built broad cases",
+        "matched_cases": "Matched cases",
+    }.get(group, group.replace("_", " ").title())
+
+
+def _prior_cofactor_label(cofactor: str) -> str:
+    return {"sepsis": "Sepsis", "renal_injury": "Renal injury"}.get(cofactor, cofactor.replace("_", " ").title())
+
+
 def _case_index_frame(config: ProjectConfig, frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty or "person_id" not in frame.columns or "index_date" not in frame.columns:
         return pd.DataFrame(columns=["person_id", "index_date"])
@@ -807,6 +850,113 @@ def build_case_cofactor_prior_timing_summary(
                 count = int(mask.sum())
                 rows.append(_empty_prior_timing_row(group_name, cofactor, window, n_cases, n_prior, count))
     return pd.DataFrame(rows)
+
+
+def write_case_cofactor_prior_timing_histogram(summary: pd.DataFrame, path: str) -> None:
+    windows = [window for window, _, _ in _PRIOR_TIMING_BINS]
+    if summary.empty:
+        write_text(_prior_timing_placeholder_svg("No timing rows available."), path)
+        return
+    plot = summary[summary["window"].isin(windows)].copy()
+    if plot.empty:
+        write_text(_prior_timing_placeholder_svg("No binned prior timing rows available."), path)
+        return
+    plot["n_cases_in_window"] = pd.to_numeric(plot["n_cases_in_window"], errors="coerce").fillna(0)
+    plot["pct_of_all_cases"] = pd.to_numeric(plot["pct_of_all_cases"], errors="coerce")
+    groups = [group for group in ("matched_cases", "built_broad_cases") if group in set(plot["group"])]
+    groups.extend(sorted(set(plot["group"]).difference(groups)))
+    cofactors = [cofactor for cofactor in ("sepsis", "renal_injury") if cofactor in set(plot["cofactor"])]
+    cofactors.extend(sorted(set(plot["cofactor"]).difference(cofactors)))
+    if not groups or not cofactors:
+        write_text(_prior_timing_placeholder_svg("No sepsis or renal-injury timing rows available."), path)
+        return
+
+    width = 1120
+    panel_height = 310
+    top_margin = 82
+    bottom_margin = 66
+    left = 86
+    right = 36
+    inner_width = width - left - right
+    height = top_margin + panel_height * len(groups) + bottom_margin
+    axis_color = "#1f2937"
+    colors = {"sepsis": "#0f766e", "renal_injury": "#b45309"}
+    fallback_colors = ["#2563eb", "#7c3aed", "#be123c", "#4b5563"]
+
+    legend_parts = []
+    legend_x = left
+    for index, cofactor in enumerate(cofactors):
+        color = colors.get(cofactor, fallback_colors[index % len(fallback_colors)])
+        x = legend_x + index * 170
+        legend_parts.append(
+            f'<rect x="{x}" y="48" width="18" height="18" fill="{color}" />'
+            f'<text x="{x + 26}" y="62" font-size="14" font-family="Menlo, monospace">{_svg_text(_prior_cofactor_label(cofactor))}</text>'
+        )
+
+    panels: list[str] = []
+    for group_index, group in enumerate(groups):
+        panel_top = top_margin + group_index * panel_height
+        axis_y = panel_top + panel_height - 58
+        plot_top = panel_top + 34
+        plot_height = axis_y - plot_top
+        group_df = plot[plot["group"] == group].copy()
+        max_y = max(float(group_df["n_cases_in_window"].max()), 1.0)
+        max_y *= 1.08
+        bin_width = inner_width / len(windows)
+        bar_width = min(30.0, (bin_width * 0.72) / max(len(cofactors), 1))
+        panel_parts = [
+            f'<text x="{left}" y="{panel_top + 18}" font-size="18" font-weight="700" font-family="Menlo, monospace">{_svg_text(_prior_group_label(group))}</text>',
+            f'<line x1="{left}" y1="{axis_y}" x2="{width - right}" y2="{axis_y}" stroke="{axis_color}" />',
+            f'<line x1="{left}" y1="{plot_top}" x2="{left}" y2="{axis_y}" stroke="{axis_color}" />',
+            f'<text x="{left - 10}" y="{plot_top + 4}" text-anchor="end" font-size="11" font-family="Menlo, monospace">{int(round(max_y))}</text>',
+            f'<text x="{left - 10}" y="{axis_y + 4}" text-anchor="end" font-size="11" font-family="Menlo, monospace">0</text>',
+        ]
+        for window_index, window in enumerate(windows):
+            center = left + window_index * bin_width + bin_width / 2
+            panel_parts.append(
+                f'<text x="{center:.1f}" y="{axis_y + 22}" text-anchor="middle" font-size="12" font-family="Menlo, monospace">{_svg_text(_prior_window_label(window))}</text>'
+            )
+            for cofactor_index, cofactor in enumerate(cofactors):
+                row = group_df[(group_df["window"] == window) & (group_df["cofactor"] == cofactor)]
+                count = float(row["n_cases_in_window"].iloc[0]) if not row.empty else 0.0
+                pct = row["pct_of_all_cases"].iloc[0] if not row.empty else np.nan
+                bar_height = 0.0 if max_y <= 0 else (count / max_y) * plot_height
+                x = center - (bar_width * len(cofactors)) / 2 + cofactor_index * bar_width
+                y = axis_y - bar_height
+                color = colors.get(cofactor, fallback_colors[cofactor_index % len(fallback_colors)])
+                tooltip = (
+                    f"{_prior_group_label(group)}; {_prior_cofactor_label(cofactor)}; "
+                    f"{_prior_window_label(window)} days before index: {int(count)} cases"
+                )
+                if pd.notna(pct):
+                    tooltip += f" ({float(pct):.1f}% of all cases)"
+                panel_parts.append(
+                    f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width - 2:.1f}" height="{bar_height:.1f}" fill="{color}" opacity="0.88">'
+                    f"<title>{_svg_text(tooltip)}</title>"
+                    "</rect>"
+                )
+                if count > 0:
+                    label_y = max(plot_top + 12, y - 5)
+                    panel_parts.append(
+                        f'<text x="{x + (bar_width - 2) / 2:.1f}" y="{label_y:.1f}" text-anchor="middle" font-size="10" font-family="Menlo, monospace">{int(count)}</text>'
+                    )
+        panel_parts.append(
+            f'<text x="{left + inner_width / 2:.1f}" y="{axis_y + 46}" text-anchor="middle" font-size="12" font-family="Menlo, monospace">Days before first rhabdomyolysis condition record</text>'
+        )
+        panel_parts.append(
+            f'<text x="24" y="{plot_top + plot_height / 2:.1f}" font-size="12" transform="rotate(-90 24 {plot_top + plot_height / 2:.1f})" font-family="Menlo, monospace">Cases</text>'
+        )
+        panels.append("".join(panel_parts))
+
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">'
+        '<rect width="100%" height="100%" fill="#fffdf7" />'
+        f'<text x="{left}" y="30" font-size="24" font-family="Menlo, monospace">Prior sepsis/renal injury timing before rhabdo index</text>'
+        f'{"".join(legend_parts)}'
+        f'{"".join(panels)}'
+        "</svg>"
+    )
+    write_text(svg, path)
 
 
 def add_model_splits(
@@ -1164,6 +1314,7 @@ def characterize_case_control_cohort(
     write_dataframe(split_table1, split_table1_path(paths))
     write_dataframe(critical, critical_illness_summary_path(paths))
     write_dataframe(prior_timing, case_cofactor_prior_timing_path(paths))
+    write_case_cofactor_prior_timing_histogram(prior_timing, case_cofactor_prior_timing_histogram_path(paths))
     write_dataframe(split_summary, model_split_summary_path(paths))
     write_dataframe(eligibility, model_eligibility_summary_path(paths))
     write_dataframe(missingness, missingness_summary_path(paths))
@@ -1172,7 +1323,12 @@ def characterize_case_control_cohort(
     _write_markdown_table(table1, matched_table1_report_path(paths), "Matched Clinical Table 1")
     _write_markdown_table(split_table1, split_table1_report_path(paths), "Matched Clinical Table 1 by Split")
     _write_markdown_table(critical, critical_illness_summary_report_path(paths), "Sepsis and Renal Injury Timing Summary")
-    _write_markdown_table(prior_timing, case_cofactor_prior_timing_report_path(paths), "Case Cofactor Prior Timing")
+    write_text(
+        "# Case Cofactor Prior Timing\n\n"
+        "![Case cofactor prior timing histogram](case_cofactor_prior_timing_histogram.svg)\n\n"
+        f"{_markdown_table(prior_timing)}\n",
+        case_cofactor_prior_timing_report_path(paths),
+    )
     _write_markdown_table(split_summary, model_split_summary_report_path(paths), "Model Split Summary")
     _write_markdown_table(eligibility, model_eligibility_summary_report_path(paths), "Model Eligibility Summary")
     _write_markdown_table(missingness, missingness_summary_report_path(paths), "Matched Cohort Missingness Summary")
@@ -1192,6 +1348,7 @@ def characterize_case_control_cohort(
             "## Sepsis and Renal Injury Timing Summary",
             _markdown_table(critical),
             "## Case Cofactor Prior Timing",
+            "![Case cofactor prior timing histogram](case_cofactor_prior_timing_histogram.svg)",
             _markdown_table(prior_timing),
             "## Missingness Summary",
             _markdown_table(missingness),
@@ -1413,6 +1570,7 @@ __all__ = [
     "build_model_split_summary",
     "build_split_table1",
     "characterize_case_control_cohort",
+    "case_cofactor_prior_timing_histogram_path",
     "case_cofactor_prior_timing_path",
     "case_cofactor_prior_timing_report_path",
     "clinical_model_input_path",
@@ -1434,4 +1592,5 @@ __all__ = [
     "split_table1_path",
     "split_table1_report_path",
     "summarize_clinical_demographics",
+    "write_case_cofactor_prior_timing_histogram",
 ]

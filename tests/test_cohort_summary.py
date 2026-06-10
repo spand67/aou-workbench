@@ -11,6 +11,7 @@ from aou_workbench.cohort_summary import (
     add_model_splits,
     build_case_cofactor_prior_timing_summary,
     build_matched_table1,
+    case_cofactor_prior_timing_histogram_path,
     case_cofactor_prior_timing_path,
     characterize_case_control_cohort,
     clinical_model_input_path,
@@ -93,6 +94,7 @@ class CohortSummaryTests(unittest.TestCase):
         self.assertTrue(Path(matched_table1_path(output_paths)).exists())
         self.assertTrue(Path(critical_illness_summary_path(output_paths)).exists())
         self.assertTrue(Path(case_cofactor_prior_timing_path(output_paths)).exists())
+        self.assertTrue(Path(case_cofactor_prior_timing_histogram_path(output_paths)).exists())
         self.assertTrue(Path(split_table1_path(output_paths)).exists())
         self.assertTrue(Path(model_split_summary_path(output_paths)).exists())
         self.assertTrue(Path(model_eligibility_summary_path(output_paths)).exists())
@@ -101,6 +103,7 @@ class CohortSummaryTests(unittest.TestCase):
         self.assertTrue(Path(clinical_characterization_report_path(output_paths)).exists())
         self.assertIn("periindex_sepsis", set(outputs["critical_illness"]["variable"]))
         self.assertFalse(outputs["case_cofactor_prior_timing"].empty)
+        self.assertIn("<svg", Path(case_cofactor_prior_timing_histogram_path(output_paths)).read_text(encoding="utf-8"))
         self.assertIn("ci_95", outputs["table1"].columns)
         self.assertIn("missing", set(outputs["table1"]["variable"].str.extract(r"Ancestry: (.*), n", expand=False).dropna()))
         self.assertIn("train", set(outputs["split_summary"]["group"]))
