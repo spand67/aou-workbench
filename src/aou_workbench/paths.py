@@ -58,6 +58,7 @@ class ProjectPaths:
     stage4_manhattan_svg: str
     stage4_qq_svg: str
     final_report_md: str
+    final_dashboard_html: str
 
     def as_dict(self) -> dict[str, str]:
         return self.__dict__.copy()
@@ -91,6 +92,7 @@ def build_output_paths(config: ProjectConfig) -> ProjectPaths:
         stage4_manhattan_svg=join_path(run_root, "stage4", "manhattan.svg"),
         stage4_qq_svg=join_path(run_root, "stage4", "qq.svg"),
         final_report_md=join_path(run_root, "rhabdo_summary_report.md"),
+        final_dashboard_html=join_path(run_root, "rhabdo_dashboard.html"),
     )
 
 

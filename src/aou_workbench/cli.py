@@ -321,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
         paths = run_all(config, skip_preflight=args.skip_preflight)
         print(f"Run root: {paths.run_root}")
         print(f"Final report: {paths.final_report_md}")
+        print(f"Dashboard: {paths.final_dashboard_html}")
         return 0
 
     if args.command in {"run-stage1", "run-stage2", "run-stage3", "run-stage4"}:
@@ -352,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "report":
         paths = render_existing_report(config)
         print(f"Final report: {paths.final_report_md}")
+        print(f"Dashboard: {paths.final_dashboard_html}")
         return 0
 
     if args.command == "summarize-cohort":
@@ -396,6 +398,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"report: {clinical_characterization_report_path(paths)}")
         report_paths = render_existing_report(config)
         print(f"analysis_report: {report_paths.final_report_md}")
+        print(f"analysis_dashboard: {report_paths.final_dashboard_html}")
         return 0
 
     if args.command == "run-clinical-model":
@@ -424,6 +427,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"calibration_plot: {clinical_model_calibration_svg_path(paths)}")
         report_paths = render_existing_report(config)
         print(f"analysis_report: {report_paths.final_report_md}")
+        print(f"analysis_dashboard: {report_paths.final_dashboard_html}")
         return 0
 
     if args.command == "profile-preindex-cases":
@@ -445,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"report: {preindex_report_path(paths)}")
         report_paths = render_existing_report(config)
         print(f"analysis_report: {report_paths.final_report_md}")
+        print(f"analysis_dashboard: {report_paths.final_dashboard_html}")
         return 0
 
     parser.error(f"Unknown command: {args.command}")

@@ -81,6 +81,7 @@ class PipelineIntegrationTests(unittest.TestCase):
             output_paths.stage4_full_results_tsv,
             output_paths.stage4_manhattan_svg,
             output_paths.final_report_md,
+            output_paths.final_dashboard_html,
         ]
         for path in expected:
             self.assertTrue(Path(path).exists(), path)
@@ -89,6 +90,12 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertIn("Cohort Characterization", report_text)
         self.assertIn("Clinical-Only Prediction Model", report_text)
         self.assertIn("GWAS Manhattan Plot", report_text)
+        dashboard_text = Path(output_paths.final_dashboard_html).read_text(encoding="utf-8")
+        self.assertIn("<!doctype html>", dashboard_text)
+        self.assertIn("Rhabdomyolysis Analysis Dashboard", dashboard_text)
+        self.assertIn("CONSORT Counts", dashboard_text)
+        self.assertIn("GWAS Manhattan Plot", dashboard_text)
 
         rebuilt_paths = render_existing_report(config)
         self.assertEqual(rebuilt_paths.final_report_md, output_paths.final_report_md)
+        self.assertEqual(rebuilt_paths.final_dashboard_html, output_paths.final_dashboard_html)

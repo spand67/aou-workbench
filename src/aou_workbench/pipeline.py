@@ -45,7 +45,7 @@ from .preindex_profile import (
     preindex_measurement_top_path,
     preindex_summary_path,
 )
-from .reporting import load_table_if_exists, write_final_report
+from .reporting import load_table_if_exists, write_dashboard_report, write_final_report
 from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_prepare import prepare_stage2_variant_table
@@ -120,19 +120,38 @@ def _report_figure_paths(paths: ProjectPaths) -> dict[str, str]:
 
 def _write_existing_final_report(effective: ProjectConfig, paths: ProjectPaths) -> None:
     report_tables = _report_tables(paths)
+    genetics_tables = {
+        "stage1": load_table_if_exists(paths.stage1_results_tsv),
+        "stage2_genes": load_table_if_exists(paths.stage2_gene_tsv),
+        "stage3": load_table_if_exists(paths.stage3_results_tsv),
+        "stage4_hits": load_table_if_exists(paths.stage4_lead_hits_tsv),
+    }
+    source_paths = _report_source_paths(paths)
+    figure_paths = _report_figure_paths(paths)
     write_final_report(
         analysis_name=effective.analysis.analysis_name,
         output_root=paths.run_root,
-        stage1=load_table_if_exists(paths.stage1_results_tsv),
-        stage2_genes=load_table_if_exists(paths.stage2_gene_tsv),
-        stage3=load_table_if_exists(paths.stage3_results_tsv),
-        stage4_hits=load_table_if_exists(paths.stage4_lead_hits_tsv),
+        stage1=genetics_tables["stage1"],
+        stage2_genes=genetics_tables["stage2_genes"],
+        stage3=genetics_tables["stage3"],
+        stage4_hits=genetics_tables["stage4_hits"],
         path=paths.final_report_md,
         cohort_tables=report_tables["cohort_tables"],
         clinical_model_tables=report_tables["clinical_model_tables"],
         preindex_tables=report_tables["preindex_tables"],
-        source_paths=_report_source_paths(paths),
-        figure_paths=_report_figure_paths(paths),
+        source_paths=source_paths,
+        figure_paths=figure_paths,
+    )
+    write_dashboard_report(
+        analysis_name=effective.analysis.analysis_name,
+        output_root=paths.run_root,
+        path=paths.final_dashboard_html,
+        cohort_tables=report_tables["cohort_tables"],
+        clinical_model_tables=report_tables["clinical_model_tables"],
+        preindex_tables=report_tables["preindex_tables"],
+        genetics_tables=genetics_tables,
+        source_paths=source_paths,
+        figure_paths=figure_paths,
     )
 
 

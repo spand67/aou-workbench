@@ -20,3 +20,4 @@ class PathPlanningTests(unittest.TestCase):
         output_paths = build_output_paths(config)
         self.assertIn("unit-test-rhabdo", output_paths.run_root)
         self.assertTrue(output_paths.stage4_manhattan_svg.endswith("manhattan.svg"))
+        self.assertTrue(output_paths.final_dashboard_html.endswith("rhabdo_dashboard.html"))
