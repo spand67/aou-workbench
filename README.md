@@ -73,6 +73,14 @@ aou-workbench characterize-cohort
 
 This writes CONSORT counts, a matched clinical Table 1 with effect sizes and 95% confidence intervals, a matched-group train/test split summary, model eligibility counts, split-specific Table 1 outputs, a missingness summary, a clinical model input table, and a sepsis/renal-injury timing summary under `cohort/` in the configured run root. Table 1 reports sex as explicit female, male, other/unknown, and missing categories while retaining `is_female` as the binary matching/modeling indicator; ancestry missingness is reported as an explicit category. Clinical cofactors are retained as ever/never flags and split into `preindex_*`, `periindex_*`, and `postindex_*` columns using the `[-7, +45]` day peri-index window. Use the pre-index columns as baseline covariates for matched models; treat peri-index sepsis and renal injury as acute-event characterization or sensitivity-stratification variables. The split is assigned at the matched-group level with an 80/20 train/test holdout and 5 training-only CV folds, so final model performance can be evaluated once on the holdout while clinical model selection and later PRS tuning happen inside the training folds. The primary clinical modeling flag excludes pre/peri-index crush injury at the row and matched-case group level, while sensitivity flags retain trauma or additionally remove peri-index sepsis groups.
 
+Run the first clinical-only prediction model:
+
+```bash
+aou-workbench run-clinical-model
+```
+
+This trains an L2-regularized logistic model on the primary non-traumatic training set and evaluates it once on the held-out test set. The model uses baseline and pre-index predictors only: age, observation depth, condition-record depth, sex category, ancestry category, pre-index sepsis, and pre-index renal injury. Metrics, coefficients, predictions, calibration, ROC, and precision-recall outputs are written under `clinical/model/`.
+
 Prepare and run Stage 1 with the direct WGS VDS workflow:
 
 ```bash

@@ -6,6 +6,18 @@ import argparse
 import os
 import sys
 
+from .clinical_model import (
+    clinical_model_calibration_path,
+    clinical_model_calibration_svg_path,
+    clinical_model_coefficients_path,
+    clinical_model_cv_metrics_path,
+    clinical_model_metrics_path,
+    clinical_model_pr_svg_path,
+    clinical_model_predictions_path,
+    clinical_model_report_path,
+    clinical_model_roc_svg_path,
+    run_clinical_model,
+)
 from .config import load_project_config
 from .cohort import apply_time_anchored_clinical_cofactors
 from .cohort_summary import (
@@ -173,6 +185,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write CONSORT counts, matched Table 1, and sepsis/renal injury timing summaries.",
     )
     _add_config_arguments(characterize_parser)
+
+    clinical_model_parser = subparsers.add_parser(
+        "run-clinical-model",
+        help="Train and evaluate the clinical-only rhabdomyolysis prediction model.",
+    )
+    _add_config_arguments(clinical_model_parser)
+    clinical_model_parser.add_argument(
+        "--eligibility-flag",
+        default="primary_model_eligible",
+        help="Eligibility flag in clinical_model_input.tsv. Default: primary_model_eligible.",
+    )
+    clinical_model_parser.add_argument(
+        "--l2-penalty",
+        type=float,
+        default=1.0,
+        help="L2 penalty for regularized logistic regression. Default: 1.0.",
+    )
 
     preindex_parser = subparsers.add_parser(
         "profile-preindex-cases",
@@ -358,6 +387,32 @@ def main(argv: list[str] | None = None) -> int:
         print(f"missingness_report: {missingness_summary_report_path(paths)}")
         print(f"clinical_model_input: {clinical_model_input_path(paths)}")
         print(f"report: {clinical_characterization_report_path(paths)}")
+        return 0
+
+    if args.command == "run-clinical-model":
+        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
+        if not os.path.exists(clinical_model_input_path(paths)):
+            _, _, matched_df = _load_or_build_matched_artifacts(config)
+            characterize_case_control_cohort(effective, cohort_df, matched_df, paths)
+        outputs = run_clinical_model(
+            effective,
+            paths,
+            eligibility_flag=args.eligibility_flag,
+            l2_penalty=args.l2_penalty,
+        )
+        metrics = outputs["metrics"]
+        test_metrics = metrics[metrics["evaluation_set"] == "test"].iloc[0]
+        print(f"Clinical model test ROC AUC: {test_metrics['roc_auc']:.4f}")
+        print(f"Clinical model test average precision: {test_metrics['average_precision']:.4f}")
+        print(f"metrics: {clinical_model_metrics_path(paths)}")
+        print(f"cv_metrics: {clinical_model_cv_metrics_path(paths)}")
+        print(f"coefficients: {clinical_model_coefficients_path(paths)}")
+        print(f"predictions: {clinical_model_predictions_path(paths)}")
+        print(f"calibration: {clinical_model_calibration_path(paths)}")
+        print(f"report: {clinical_model_report_path(paths)}")
+        print(f"roc: {clinical_model_roc_svg_path(paths)}")
+        print(f"precision_recall: {clinical_model_pr_svg_path(paths)}")
+        print(f"calibration_plot: {clinical_model_calibration_svg_path(paths)}")
         return 0
 
     if args.command == "profile-preindex-cases":
