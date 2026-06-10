@@ -65,6 +65,17 @@ aou-workbench build-cohort
 aou-workbench match-controls
 ```
 
+For a genomics-first rerun, create the WGS/ACAF sample manifest first and restrict every cohort artifact to those samples:
+
+```bash
+aou-workbench prepare-wgs-manifest
+aou-workbench build-cohort --require-wgs
+aou-workbench match-controls --require-wgs
+aou-workbench characterize-cohort --require-wgs
+```
+
+`prepare-wgs-manifest` reads only the sample IDs from the AoU ACAF threshold split MatrixTable and writes the manifest path used by downstream WGS restrictions. The `--require-wgs` commands then save a WGS-restricted built cohort, matched cohort, CONSORT, Table 1, split summaries, and clinical model input. This is the preferred setup before any GWAS or PRS work.
+
 Characterize the inclusive case-control cohort before genomic modeling:
 
 ```bash

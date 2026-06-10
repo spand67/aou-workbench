@@ -46,6 +46,7 @@ from .preindex_profile import (
     preindex_summary_path,
 )
 from .reporting import load_table_if_exists, write_dashboard_report, write_final_report
+from .sample_restriction import restrict_frame_for_gwas
 from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_prepare import prepare_stage2_variant_table
@@ -177,22 +178,40 @@ def _write_rendered_sql(config: ProjectConfig, paths: ProjectPaths) -> None:
     write_text(render_covariate_sql(config), f"{paths.cohort_sql_root}/rhabdo_covariates.sql")
 
 
-def build_cohort_artifacts(config: ProjectConfig) -> tuple[ProjectConfig, ProjectPaths, pd.DataFrame]:
+def _restrict_cohort_to_wgs_if_requested(
+    config: ProjectConfig,
+    cohort_df: pd.DataFrame,
+    *,
+    require_wgs: bool,
+) -> pd.DataFrame:
+    if not require_wgs:
+        return cohort_df
+    return restrict_frame_for_gwas(config, cohort_df, require_wgs=True)
+
+
+def build_cohort_artifacts(config: ProjectConfig, *, require_wgs: bool = False) -> tuple[ProjectConfig, ProjectPaths, pd.DataFrame]:
     effective = apply_runtime_defaults(config)
     paths = build_output_paths(effective)
     cohort_df = build_rhabdo_cohort(effective)
+    cohort_df = _restrict_cohort_to_wgs_if_requested(effective, cohort_df, require_wgs=require_wgs)
     write_dataframe(cohort_df, paths.built_cohort_tsv)
     _write_rendered_sql(effective, paths)
     write_json(cohort_qc_summary(cohort_df), paths.cohort_qc_json)
-    _write_manifest(effective, paths, extra={"built_cohort_rows": int(len(cohort_df))})
+    _write_manifest(effective, paths, extra={"built_cohort_rows": int(len(cohort_df)), "require_wgs": bool(require_wgs)})
     return effective, paths, cohort_df
 
 
-def match_controls_artifacts(config: ProjectConfig, cohort_df: pd.DataFrame | None = None) -> tuple[ProjectConfig, ProjectPaths, pd.DataFrame]:
+def match_controls_artifacts(
+    config: ProjectConfig,
+    cohort_df: pd.DataFrame | None = None,
+    *,
+    require_wgs: bool = False,
+) -> tuple[ProjectConfig, ProjectPaths, pd.DataFrame]:
     effective = apply_runtime_defaults(config)
     paths = build_output_paths(effective)
     if cohort_df is None:
         cohort_df = build_rhabdo_cohort(effective)
+    cohort_df = _restrict_cohort_to_wgs_if_requested(effective, cohort_df, require_wgs=require_wgs)
     matching_universe_df = matching_universe(cohort_df, effective)
     matched_df = apply_time_anchored_clinical_cofactors(effective, match_case_controls(cohort_df, effective))
     write_dataframe(matched_df, paths.matched_cohort_tsv)
@@ -201,7 +220,7 @@ def match_controls_artifacts(config: ProjectConfig, cohort_df: pd.DataFrame | No
     qc_payload["matching_universe_people"] = int(matching_universe_df["person_id"].astype(str).nunique())
     qc_payload.update(matching_qc_summary(matched_df))
     write_json(qc_payload, paths.cohort_qc_json)
-    _write_manifest(effective, paths, extra={"matched_rows": int(len(matched_df))})
+    _write_manifest(effective, paths, extra={"matched_rows": int(len(matched_df)), "require_wgs": bool(require_wgs)})
     return effective, paths, matched_df
 
 

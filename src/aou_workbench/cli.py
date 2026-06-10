@@ -59,7 +59,7 @@ from .preindex_profile import (
 )
 from .preflight import apply_runtime_defaults, format_preflight_report, run_preflight_checks
 from .regenie import prepare_regenie_inputs
-from .stage1_prepare import prepare_stage1_variant_table
+from .stage1_prepare import prepare_stage1_variant_table, prepare_wgs_sample_manifest
 from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_prepare import prepare_stage2_variant_table
 from .stage2_plp_panel import run_stage2_plp_panel
@@ -103,23 +103,23 @@ def _load_config(args: argparse.Namespace):
     )
 
 
-def _load_or_build_matched_artifacts(config):
+def _load_or_build_matched_artifacts(config, *, require_wgs: bool = False):
     effective = apply_runtime_defaults(config)
     paths = build_output_paths(effective)
-    if os.path.exists(paths.matched_cohort_tsv):
+    if os.path.exists(paths.matched_cohort_tsv) and not require_wgs:
         matched_df = read_table(paths.matched_cohort_tsv)
         matched_df = apply_time_anchored_clinical_cofactors(effective, matched_df)
         return effective, paths, matched_df
-    return match_controls_artifacts(config)
+    return match_controls_artifacts(config, require_wgs=require_wgs)
 
 
-def _load_or_build_cohort_artifacts(config):
+def _load_or_build_cohort_artifacts(config, *, require_wgs: bool = False):
     effective = apply_runtime_defaults(config)
     paths = build_output_paths(effective)
-    if os.path.exists(paths.built_cohort_tsv):
+    if os.path.exists(paths.built_cohort_tsv) and not require_wgs:
         cohort_df = read_table(paths.built_cohort_tsv)
         return effective, paths, cohort_df
-    return build_cohort_artifacts(config)
+    return build_cohort_artifacts(config, require_wgs=require_wgs)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -131,9 +131,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
     build_parser = subparsers.add_parser("build-cohort", help="Build the tiered rhabdomyolysis cohort.")
     _add_config_arguments(build_parser)
+    build_parser.add_argument("--require-wgs", action="store_true", help="Restrict the saved cohort to WGS/ACAF sample IDs.")
 
     match_parser = subparsers.add_parser("match-controls", help="Build the matched case-control cohort.")
     _add_config_arguments(match_parser)
+    match_parser.add_argument("--require-wgs", action="store_true", help="Restrict the cohort and matching universe to WGS/ACAF sample IDs.")
+
+    wgs_manifest_parser = subparsers.add_parser(
+        "prepare-wgs-manifest",
+        help="Write the WGS/ACAF sample manifest used for WGS-restricted cohort runs.",
+    )
+    _add_config_arguments(wgs_manifest_parser)
 
     prepare_stage1_parser = subparsers.add_parser(
         "prepare-stage1",
@@ -246,6 +254,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write CONSORT counts, matched Table 1, and sepsis/renal injury timing summaries.",
     )
     _add_config_arguments(characterize_parser)
+    characterize_parser.add_argument("--require-wgs", action="store_true", help="Build/load WGS-restricted cohort artifacts.")
 
     clinical_model_parser = subparsers.add_parser(
         "run-clinical-model",
@@ -263,6 +272,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="L2 penalty for regularized logistic regression. Default: 1.0.",
     )
+    clinical_model_parser.add_argument("--require-wgs", action="store_true", help="Build/load WGS-restricted cohort artifacts.")
 
     preindex_parser = subparsers.add_parser(
         "profile-preindex-cases",
@@ -293,16 +303,27 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "build-cohort":
-        _, paths, cohort_df = build_cohort_artifacts(config)
+        _, paths, cohort_df = build_cohort_artifacts(config, require_wgs=args.require_wgs)
         print(f"Built cohort rows: {len(cohort_df)}")
         print(f"Cohort path: {paths.built_cohort_tsv}")
         return 0
 
     if args.command == "match-controls":
-        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
-        _, paths, matched_df = match_controls_artifacts(effective, cohort_df)
+        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config, require_wgs=args.require_wgs)
+        _, paths, matched_df = match_controls_artifacts(effective, cohort_df, require_wgs=args.require_wgs)
         print(f"Matched cohort rows: {len(matched_df)}")
         print(f"Matched cohort path: {paths.matched_cohort_tsv}")
+        return 0
+
+    if args.command == "prepare-wgs-manifest":
+        manifest = prepare_wgs_sample_manifest(config)
+        effective = apply_runtime_defaults(config)
+        stage = effective.analysis.stage1
+        print(f"WGS/ACAF manifest rows: {len(manifest)}")
+        if stage is not None:
+            from .stage1_prepare import stage1_sample_manifest_path
+
+            print(stage1_sample_manifest_path(stage.variant_table))
         return 0
 
     if args.command == "prepare-stage1":
@@ -455,8 +476,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "characterize-cohort":
-        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
-        _, _, matched_df = _load_or_build_matched_artifacts(config)
+        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config, require_wgs=args.require_wgs)
+        _, _, matched_df = _load_or_build_matched_artifacts(config, require_wgs=args.require_wgs)
         outputs = characterize_case_control_cohort(effective, cohort_df, matched_df, paths)
         print(f"CONSORT rows: {outputs['consort'].shape[0]}")
         print(f"Table 1 rows: {outputs['table1'].shape[0]}")
@@ -491,9 +512,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run-clinical-model":
-        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
-        if not os.path.exists(clinical_model_input_path(paths)):
-            _, _, matched_df = _load_or_build_matched_artifacts(config)
+        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config, require_wgs=args.require_wgs)
+        if args.require_wgs or not os.path.exists(clinical_model_input_path(paths)):
+            _, _, matched_df = _load_or_build_matched_artifacts(config, require_wgs=args.require_wgs)
             characterize_case_control_cohort(effective, cohort_df, matched_df, paths)
         outputs = run_clinical_model(
             effective,

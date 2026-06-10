@@ -10,6 +10,7 @@ from aou_workbench.stage1_prepare import (
     _collapse_stage1_rows,
     _matched_person_ids,
     _panel_targets_frame,
+    _sample_manifest_frame,
     _target_interval_strings,
     stage1_sample_manifest_path,
 )
@@ -49,6 +50,11 @@ class Stage1PrepareTests(unittest.TestCase):
 
         self.assertEqual(_analysis_person_ids(matched_df), ["1", "10", "2", "5"])
         self.assertEqual(_matched_person_ids(matched_df), ["1", "10", "2", "5"])
+
+    def test_sample_manifest_frame_sorts_deduplicates_and_drops_blank_ids(self) -> None:
+        frame = _sample_manifest_frame(["5", "2", "5", "", "  ", 1])
+
+        self.assertEqual(frame["person_id"].tolist(), ["1", "2", "5"])
 
     def test_target_interval_strings_pad_and_sort_targets(self) -> None:
         frame = _panel_targets_frame(self.config.panel.a_priori_variants)

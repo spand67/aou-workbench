@@ -9,13 +9,35 @@ import pandas as pd
 from aou_workbench.config import load_project_config
 from dataclasses import replace
 
-from aou_workbench.pipeline import match_controls_artifacts, render_existing_report, run_all
+from aou_workbench.pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
 from aou_workbench.stage1_prepare import stage1_sample_manifest_path
 from aou_workbench.stage2_prepare import stage2_sample_manifest_path
 from tests.support import build_demo_project_tree
 
 
 class PipelineIntegrationTests(unittest.TestCase):
+    def test_build_cohort_artifacts_can_save_wgs_restricted_cohort(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        allowed = {"1", "2", "3", "4", "5"}
+        pd.DataFrame({"person_id": sorted(allowed)}).to_csv(
+            stage1_sample_manifest_path(paths["stage1_table"]),
+            sep="\t",
+            index=False,
+        )
+
+        _, output_paths, cohort_df = build_cohort_artifacts(config, require_wgs=True)
+        saved = pd.read_csv(output_paths.built_cohort_tsv, sep="\t")
+
+        self.assertTrue(set(cohort_df["person_id"].astype(str)).issubset(allowed))
+        self.assertTrue(set(saved["person_id"].astype(str)).issubset(allowed))
+
     def test_match_controls_artifacts_restricts_to_wgs_and_optional_max_unrelated(self) -> None:
         paths = build_demo_project_tree()
         config = load_project_config(
