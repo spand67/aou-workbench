@@ -394,6 +394,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"missingness_report: {missingness_summary_report_path(paths)}")
         print(f"clinical_model_input: {clinical_model_input_path(paths)}")
         print(f"report: {clinical_characterization_report_path(paths)}")
+        report_paths = render_existing_report(config)
+        print(f"analysis_report: {report_paths.final_report_md}")
         return 0
 
     if args.command == "run-clinical-model":
@@ -420,6 +422,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"roc: {clinical_model_roc_svg_path(paths)}")
         print(f"precision_recall: {clinical_model_pr_svg_path(paths)}")
         print(f"calibration_plot: {clinical_model_calibration_svg_path(paths)}")
+        report_paths = render_existing_report(config)
+        print(f"analysis_report: {report_paths.final_report_md}")
         return 0
 
     if args.command == "profile-preindex-cases":
@@ -439,6 +443,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"top_measurements: {preindex_measurement_top_path(paths)}")
         print(f"biomarkers: {preindex_biomarker_path(paths)}")
         print(f"report: {preindex_report_path(paths)}")
+        report_paths = render_existing_report(config)
+        print(f"analysis_report: {report_paths.final_report_md}")
         return 0
 
     parser.error(f"Unknown command: {args.command}")

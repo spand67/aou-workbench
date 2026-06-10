@@ -9,7 +9,7 @@ import pandas as pd
 from aou_workbench.config import load_project_config
 from dataclasses import replace
 
-from aou_workbench.pipeline import match_controls_artifacts, run_all
+from aou_workbench.pipeline import match_controls_artifacts, render_existing_report, run_all
 from aou_workbench.stage1_prepare import stage1_sample_manifest_path
 from aou_workbench.stage2_prepare import stage2_sample_manifest_path
 from tests.support import build_demo_project_tree
@@ -84,3 +84,11 @@ class PipelineIntegrationTests(unittest.TestCase):
         ]
         for path in expected:
             self.assertTrue(Path(path).exists(), path)
+        report_text = Path(output_paths.final_report_md).read_text(encoding="utf-8")
+        self.assertIn("Rhabdomyolysis Analysis Summary", report_text)
+        self.assertIn("Cohort Characterization", report_text)
+        self.assertIn("Clinical-Only Prediction Model", report_text)
+        self.assertIn("GWAS Manhattan Plot", report_text)
+
+        rebuilt_paths = render_existing_report(config)
+        self.assertEqual(rebuilt_paths.final_report_md, output_paths.final_report_md)

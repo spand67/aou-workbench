@@ -6,7 +6,27 @@ from typing import Any
 
 import pandas as pd
 
+from .clinical_model import (
+    clinical_model_calibration_path,
+    clinical_model_calibration_svg_path,
+    clinical_model_coefficients_path,
+    clinical_model_cv_metrics_path,
+    clinical_model_metrics_path,
+    clinical_model_pr_svg_path,
+    clinical_model_roc_svg_path,
+)
 from .cohort import apply_time_anchored_clinical_cofactors, build_rhabdo_cohort, cohort_qc_summary
+from .cohort_summary import (
+    case_cofactor_prior_timing_histogram_path,
+    case_cofactor_prior_timing_path,
+    consort_counts_path,
+    critical_illness_summary_path,
+    matched_table1_path,
+    missingness_summary_path,
+    model_eligibility_summary_path,
+    model_split_summary_path,
+    split_table1_path,
+)
 from .config import ProjectConfig
 from .io_utils import write_dataframe, write_json, write_text
 from .matching import match_case_controls, matching_qc_summary, matching_universe
@@ -19,6 +39,12 @@ from .phenotype_sql import (
     render_covariate_sql,
 )
 from .preflight import apply_runtime_defaults, assert_preflight_ok, run_preflight_checks
+from .preindex_profile import (
+    preindex_biomarker_path,
+    preindex_condition_top_path,
+    preindex_measurement_top_path,
+    preindex_summary_path,
+)
 from .reporting import load_table_if_exists, write_final_report
 from .stage1_prepare import prepare_stage1_variant_table
 from .stage1_prior_variants import run_stage1_prior_variants
@@ -27,6 +53,87 @@ from .stage2_plp_panel import run_stage2_plp_panel
 from .stage4_prepare import prepare_stage4_acaf_subset
 from .stage3_burden import run_stage3_burden
 from .stage4_gwas import run_stage4_gwas
+
+
+def _report_tables(paths: ProjectPaths) -> dict[str, dict[str, pd.DataFrame]]:
+    return {
+        "cohort_tables": {
+            "consort": load_table_if_exists(consort_counts_path(paths)),
+            "table1": load_table_if_exists(matched_table1_path(paths)),
+            "split_table1": load_table_if_exists(split_table1_path(paths)),
+            "split_summary": load_table_if_exists(model_split_summary_path(paths)),
+            "eligibility": load_table_if_exists(model_eligibility_summary_path(paths)),
+            "critical_illness": load_table_if_exists(critical_illness_summary_path(paths)),
+            "case_cofactor_prior_timing": load_table_if_exists(case_cofactor_prior_timing_path(paths)),
+            "missingness": load_table_if_exists(missingness_summary_path(paths)),
+        },
+        "clinical_model_tables": {
+            "metrics": load_table_if_exists(clinical_model_metrics_path(paths)),
+            "cv_metrics": load_table_if_exists(clinical_model_cv_metrics_path(paths)),
+            "coefficients": load_table_if_exists(clinical_model_coefficients_path(paths)),
+            "calibration": load_table_if_exists(clinical_model_calibration_path(paths)),
+        },
+        "preindex_tables": {
+            "summary": load_table_if_exists(preindex_summary_path(paths)),
+            "biomarkers": load_table_if_exists(preindex_biomarker_path(paths)),
+            "top_conditions": load_table_if_exists(preindex_condition_top_path(paths)),
+            "top_measurements": load_table_if_exists(preindex_measurement_top_path(paths)),
+        },
+    }
+
+
+def _report_source_paths(paths: ProjectPaths) -> dict[str, str]:
+    return {
+        "consort": consort_counts_path(paths),
+        "table1": matched_table1_path(paths),
+        "split_table1": split_table1_path(paths),
+        "split_summary": model_split_summary_path(paths),
+        "eligibility": model_eligibility_summary_path(paths),
+        "critical_illness": critical_illness_summary_path(paths),
+        "case_cofactor_prior_timing": case_cofactor_prior_timing_path(paths),
+        "missingness": missingness_summary_path(paths),
+        "preindex_summary": preindex_summary_path(paths),
+        "preindex_biomarkers": preindex_biomarker_path(paths),
+        "preindex_top_conditions": preindex_condition_top_path(paths),
+        "preindex_top_measurements": preindex_measurement_top_path(paths),
+        "clinical_model_metrics": clinical_model_metrics_path(paths),
+        "clinical_model_cv_metrics": clinical_model_cv_metrics_path(paths),
+        "clinical_model_coefficients": clinical_model_coefficients_path(paths),
+        "clinical_model_calibration_table": clinical_model_calibration_path(paths),
+        "stage1": paths.stage1_results_tsv,
+        "stage2_genes": paths.stage2_gene_tsv,
+        "stage3": paths.stage3_results_tsv,
+        "stage4_hits": paths.stage4_lead_hits_tsv,
+    }
+
+
+def _report_figure_paths(paths: ProjectPaths) -> dict[str, str]:
+    return {
+        "case_cofactor_prior_timing_histogram": case_cofactor_prior_timing_histogram_path(paths),
+        "clinical_model_roc": clinical_model_roc_svg_path(paths),
+        "clinical_model_pr": clinical_model_pr_svg_path(paths),
+        "clinical_model_calibration": clinical_model_calibration_svg_path(paths),
+        "stage4_manhattan": paths.stage4_manhattan_svg,
+        "stage4_qq": paths.stage4_qq_svg,
+    }
+
+
+def _write_existing_final_report(effective: ProjectConfig, paths: ProjectPaths) -> None:
+    report_tables = _report_tables(paths)
+    write_final_report(
+        analysis_name=effective.analysis.analysis_name,
+        output_root=paths.run_root,
+        stage1=load_table_if_exists(paths.stage1_results_tsv),
+        stage2_genes=load_table_if_exists(paths.stage2_gene_tsv),
+        stage3=load_table_if_exists(paths.stage3_results_tsv),
+        stage4_hits=load_table_if_exists(paths.stage4_lead_hits_tsv),
+        path=paths.final_report_md,
+        cohort_tables=report_tables["cohort_tables"],
+        clinical_model_tables=report_tables["clinical_model_tables"],
+        preindex_tables=report_tables["preindex_tables"],
+        source_paths=_report_source_paths(paths),
+        figure_paths=_report_figure_paths(paths),
+    )
 
 
 def _write_manifest(config: ProjectConfig, paths: ProjectPaths, extra: dict[str, Any] | None = None) -> None:
@@ -114,15 +221,7 @@ def run_all(config: ProjectConfig, *, skip_preflight: bool = False) -> ProjectPa
         prepare_stage4_acaf_subset(effective, matched_df, paths)
         _, stage4_lead_hits = run_stage4_gwas(effective, matched_df, paths)
 
-    write_final_report(
-        analysis_name=effective.analysis.analysis_name,
-        output_root=paths.run_root,
-        stage1=stage1_df,
-        stage2_genes=stage2_gene_df if not stage2_gene_df.empty else stage2_variant_df,
-        stage3=stage3_df,
-        stage4_hits=stage4_lead_hits,
-        path=paths.final_report_md,
-    )
+    _write_existing_final_report(effective, paths)
     _write_manifest(
         effective,
         paths,
@@ -141,15 +240,7 @@ def run_all(config: ProjectConfig, *, skip_preflight: bool = False) -> ProjectPa
 def render_existing_report(config: ProjectConfig) -> ProjectPaths:
     effective = apply_runtime_defaults(config)
     paths = build_output_paths(effective)
-    write_final_report(
-        analysis_name=effective.analysis.analysis_name,
-        output_root=paths.run_root,
-        stage1=load_table_if_exists(paths.stage1_results_tsv),
-        stage2_genes=load_table_if_exists(paths.stage2_gene_tsv),
-        stage3=load_table_if_exists(paths.stage3_results_tsv),
-        stage4_hits=load_table_if_exists(paths.stage4_lead_hits_tsv),
-        path=paths.final_report_md,
-    )
+    _write_existing_final_report(effective, paths)
     _write_manifest(effective, paths, extra={"report_only": True})
     return paths
 
