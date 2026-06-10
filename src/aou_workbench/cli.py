@@ -12,6 +12,14 @@ from .gwas_workflow import prepare_terminal_gwas_workspace
 from .io_utils import read_table
 from .paths import build_output_paths, project_path
 from .pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
+from .preindex_profile import (
+    preindex_biomarker_path,
+    preindex_condition_top_path,
+    preindex_measurement_top_path,
+    preindex_report_path,
+    preindex_summary_path,
+    profile_preindex_case_data,
+)
 from .preflight import apply_runtime_defaults, format_preflight_report, run_preflight_checks
 from .regenie import prepare_regenie_inputs
 from .stage1_prepare import prepare_stage1_variant_table
@@ -136,6 +144,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write a clinical/demographic comparison table for the WGS-restricted unmatched and matched analyses.",
     )
     _add_config_arguments(summary_parser)
+
+    preindex_parser = subparsers.add_parser(
+        "profile-preindex-cases",
+        help="Summarize what condition, lab, and biomarker data are available before rhabdo index dates for cases.",
+    )
+    _add_config_arguments(preindex_parser)
+    preindex_parser.add_argument(
+        "--case-tier",
+        default=None,
+        help="Case tier to profile. Defaults to cohort.primary_case_tier.",
+    )
+    preindex_parser.add_argument(
+        "--windows",
+        default="365,1095,all",
+        help="Comma-separated pre-index windows in days, plus 'all'. Default: 365,1095,all.",
+    )
+    preindex_parser.add_argument("--top-n", type=int, default=25, help="Top concepts to keep per window.")
     return parser
 
 
@@ -274,6 +299,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Cohort summary rows: {frame.shape[0]}")
         print(cohort_summary_table_path(paths))
         print(cohort_summary_report_path(paths))
+        return 0
+
+    if args.command == "profile-preindex-cases":
+        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
+        windows = [value.strip() for value in args.windows.split(",") if value.strip()]
+        outputs = profile_preindex_case_data(
+            effective,
+            cohort_df,
+            paths,
+            case_tier=args.case_tier,
+            windows=windows,
+            top_n=args.top_n,
+        )
+        print(f"Pre-index case profile rows: {outputs['summary'].shape[0]}")
+        print(f"summary: {preindex_summary_path(paths)}")
+        print(f"top_conditions: {preindex_condition_top_path(paths)}")
+        print(f"top_measurements: {preindex_measurement_top_path(paths)}")
+        print(f"biomarkers: {preindex_biomarker_path(paths)}")
+        print(f"report: {preindex_report_path(paths)}")
         return 0
 
     parser.error(f"Unknown command: {args.command}")

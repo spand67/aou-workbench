@@ -94,6 +94,14 @@ Run the full pipeline after configuring stage-specific derived tables:
 aou-workbench run-all
 ```
 
+Profile pre-index clinical data availability for the primary case tier:
+
+```bash
+aou-workbench profile-preindex-cases --windows 365,1095,all --top-n 25
+```
+
+This writes `availability_summary.tsv`, `top_conditions.tsv`, `top_measurements.tsv`, `biomarker_availability.tsv`, generated SQL, and `report.md` under `clinical/preindex_case_profile/` in the configured run root. Treat the entire folder as controlled-tier output: the aggregate tables and report summarize case history, and the generated SQL embeds case IDs and index dates.
+
 Write the consolidated markdown report:
 
 ```bash

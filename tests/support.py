@@ -33,16 +33,22 @@ def build_demo_project_tree() -> dict[str, str]:
             }
         )
     condition_rows = [
-        {"person_id": 1, "condition_concept_id": 100, "condition_start_date": "2022-01-10"},
-        {"person_id": 2, "condition_concept_id": 100, "condition_start_date": "2022-02-12"},
-        {"person_id": 3, "condition_concept_id": 100, "condition_start_date": "2022-03-15"},
-        {"person_id": 4, "condition_concept_id": 100, "condition_start_date": "2022-04-01"},
+        {"person_id": 1, "condition_concept_id": 100, "condition_concept_name": "Rhabdomyolysis", "condition_start_date": "2022-01-10"},
+        {"person_id": 1, "condition_concept_id": 200, "condition_concept_name": "Type 2 diabetes mellitus", "condition_start_date": "2021-06-10"},
+        {"person_id": 2, "condition_concept_id": 100, "condition_concept_name": "Rhabdomyolysis", "condition_start_date": "2022-02-12"},
+        {"person_id": 2, "condition_concept_id": 201, "condition_concept_name": "Essential hypertension", "condition_start_date": "2020-03-01"},
+        {"person_id": 3, "condition_concept_id": 100, "condition_concept_name": "Rhabdomyolysis", "condition_start_date": "2022-03-15"},
+        {"person_id": 3, "condition_concept_id": 202, "condition_concept_name": "Acute kidney injury", "condition_start_date": "2021-11-05"},
+        {"person_id": 4, "condition_concept_id": 100, "condition_concept_name": "Rhabdomyolysis", "condition_start_date": "2022-04-01"},
     ]
     measurement_rows = [
-        {"person_id": 1, "measurement_concept_id": 900, "value_as_number": 6800, "measurement_date": "2022-01-11"},
-        {"person_id": 2, "measurement_concept_id": 900, "value_as_number": 7200, "measurement_date": "2022-02-13"},
-        {"person_id": 3, "measurement_concept_id": 900, "value_as_number": 5600, "measurement_date": "2022-03-16"},
-        {"person_id": 4, "measurement_concept_id": 900, "value_as_number": 1800, "measurement_date": "2022-04-01"},
+        {"person_id": 1, "measurement_concept_id": 900, "measurement_concept_name": "Creatine kinase", "value_as_number": 6800, "measurement_date": "2022-01-11"},
+        {"person_id": 1, "measurement_concept_id": 901, "measurement_concept_name": "Creatinine", "value_as_number": 0.9, "measurement_date": "2021-12-15"},
+        {"person_id": 2, "measurement_concept_id": 900, "measurement_concept_name": "Creatine kinase", "value_as_number": 7200, "measurement_date": "2022-02-13"},
+        {"person_id": 2, "measurement_concept_id": 902, "measurement_concept_name": "Potassium", "value_as_number": 4.2, "measurement_date": "2021-12-01"},
+        {"person_id": 3, "measurement_concept_id": 900, "measurement_concept_name": "Creatine kinase", "value_as_number": 5600, "measurement_date": "2022-03-16"},
+        {"person_id": 3, "measurement_concept_id": 901, "measurement_concept_name": "Creatinine", "value_as_number": 1.1, "measurement_date": "2021-10-01"},
+        {"person_id": 4, "measurement_concept_id": 900, "measurement_concept_name": "Creatine kinase", "value_as_number": 1800, "measurement_date": "2022-04-01"},
     ]
     ancestry_rows = []
     for person_id in range(1, 16):
