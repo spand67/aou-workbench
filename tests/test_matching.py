@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 import unittest
 
 import pandas as pd
@@ -28,6 +29,26 @@ class MatchingTests(unittest.TestCase):
         self.assertGreater(int((matched_df["analysis_case"] == 1).sum()), 0)
         self.assertGreater(int((matched_df["analysis_case"] == 0).sum()), 0)
         self.assertIn("match_group_id", matched_df.columns)
+
+    def test_matching_accepts_reloaded_tsv_with_string_dates(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        cohort_df = build_rhabdo_cohort(config)
+        reload_path = Path(paths["output_dir"]) / "cohort_reload.tsv"
+        reload_path.parent.mkdir(parents=True, exist_ok=True)
+        cohort_df.to_csv(reload_path, sep="\t", index=False)
+        reloaded = pd.read_csv(reload_path, sep="\t")
+
+        matched_df = match_case_controls(reloaded, config)
+
+        self.assertGreater(int((matched_df["analysis_case"] == 1).sum()), 0)
+        self.assertGreater(int((matched_df["analysis_case"] == 0).sum()), 0)
 
     def test_matching_respects_age_sex_and_ancestry_criteria(self) -> None:
         paths = build_demo_project_tree()

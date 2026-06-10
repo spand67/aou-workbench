@@ -5,7 +5,34 @@ from __future__ import annotations
 import pandas as pd
 
 from .config import ProjectConfig
+from .io_utils import parse_date
 from .sample_restriction import has_wgs_manifest, restrict_frame_for_gwas
+
+
+_DATE_COLUMNS = (
+    "obs_start_date",
+    "obs_end_date",
+    "baseline_index_date",
+    "index_date",
+    "broad_index_date",
+    "definite_index_date",
+)
+
+
+def _normalize_matching_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    output = frame.copy()
+    for column in _DATE_COLUMNS:
+        if column in output.columns:
+            output[column] = parse_date(output[column])
+    for column in ("age_at_index", "age_raw", "is_female"):
+        if column in output.columns:
+            output[column] = pd.to_numeric(output[column], errors="coerce")
+    if "eligible_control" in output.columns:
+        if output["eligible_control"].dtype == object:
+            output["eligible_control"] = output["eligible_control"].astype(str).str.lower().isin({"true", "1", "yes"})
+        else:
+            output["eligible_control"] = output["eligible_control"].fillna(False).astype(bool)
+    return output
 
 
 def _control_anchor_date(controls: pd.DataFrame) -> pd.Series:
@@ -26,6 +53,7 @@ def _match_stratum_key(frame: pd.DataFrame, columns: tuple[str, ...]) -> pd.Seri
 
 
 def _prepare_matching_inputs(cohort_df: pd.DataFrame, config: ProjectConfig) -> tuple[pd.DataFrame, dict[tuple[str, ...], pd.DataFrame]]:
+    cohort_df = _normalize_matching_frame(cohort_df)
     if config.cohort.primary_case_tier == "broad" and "broad_rhabdo_case" in cohort_df.columns:
         cases = cohort_df[cohort_df["broad_rhabdo_case"].fillna(0).astype(int) == 1].copy()
     else:
