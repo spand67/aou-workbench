@@ -200,7 +200,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "match-controls":
-        _, paths, matched_df = match_controls_artifacts(config)
+        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
+        _, paths, matched_df = match_controls_artifacts(effective, cohort_df)
         print(f"Matched cohort rows: {len(matched_df)}")
         print(f"Matched cohort path: {paths.matched_cohort_tsv}")
         return 0
