@@ -38,6 +38,22 @@ class CohortPhenotypeDefinitionTests(unittest.TestCase):
         self.assertTrue(bool(cohort.loc["5", "eligible_control"]))
         self.assertFalse(bool(cohort.loc["15", "eligible_control"]))
 
+    def test_sex_category_preserves_missing_and_other_values(self) -> None:
+        paths, config = self._config()
+        cohort_input = pd.read_csv(paths["cohort_table"], sep="\t")
+        cohort_input.loc[cohort_input["person_id"] == 14, "sex"] = ""
+        cohort_input.loc[cohort_input["person_id"] == 15, "sex"] = "not male or female"
+        cohort_input.to_csv(paths["cohort_table"], sep="\t", index=False)
+
+        cohort = build_rhabdo_cohort(config).set_index("person_id")
+
+        self.assertEqual(cohort.loc["1", "sex_category"], "female")
+        self.assertEqual(cohort.loc["2", "sex_category"], "male")
+        self.assertEqual(cohort.loc["14", "sex_category"], "missing")
+        self.assertEqual(cohort.loc["15", "sex_category"], "other_or_unknown")
+        self.assertTrue(pd.isna(cohort.loc["14", "is_female"]))
+        self.assertTrue(pd.isna(cohort.loc["15", "is_female"]))
+
     def test_definite_ck_window_is_directional(self) -> None:
         paths, config = self._config()
         measurements = pd.read_csv(paths["measurement_table"], sep="\t")

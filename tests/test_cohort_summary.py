@@ -7,6 +7,7 @@ import pandas as pd
 
 from aou_workbench.config import load_project_config
 from aou_workbench.cohort_summary import (
+    build_matched_table1,
     characterize_case_control_cohort,
     clinical_characterization_report_path,
     consort_counts_path,
@@ -85,6 +86,33 @@ class CohortSummaryTests(unittest.TestCase):
         self.assertTrue(Path(clinical_characterization_report_path(output_paths)).exists())
         self.assertIn("periindex_sepsis", set(outputs["critical_illness"]["variable"]))
         self.assertIn("ci_95", outputs["table1"].columns)
+
+    def test_matched_table1_reports_sex_categories_including_missing(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        matched = pd.DataFrame(
+            [
+                {"person_id": "1", "analysis_case": 1, "age_at_index": 50, "sex_category": "female"},
+                {"person_id": "2", "analysis_case": 1, "age_at_index": 51, "sex_category": "other_or_unknown"},
+                {"person_id": "3", "analysis_case": 0, "age_at_index": 50, "sex_category": "male"},
+                {"person_id": "4", "analysis_case": 0, "age_at_index": 51, "sex_category": "missing"},
+            ]
+        )
+
+        table1 = build_matched_table1(config, matched)
+
+        self.assertNotIn("Female sex, n (%)", set(table1["variable"]))
+        self.assertIn("Sex category distribution, overall", set(table1["variable"]))
+        self.assertIn("Sex: other/unknown, n (%)", set(table1["variable"]))
+        missing_row = table1[table1["variable"] == "Sex: missing, n (%)"].iloc[0]
+        self.assertEqual(missing_row["matched_cases"], "0 (0.0%)")
+        self.assertEqual(missing_row["matched_controls"], "1 (50.0%)")
 
 
 if __name__ == "__main__":

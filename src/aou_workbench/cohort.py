@@ -35,6 +35,39 @@ def _normalize_sex(series: pd.Series) -> pd.Series:
     )
 
 
+def _normalize_sex_category(series: pd.Series) -> pd.Series:
+    lowered = series.astype(str).str.lower().str.strip()
+    normalized = lowered.map(
+        {
+            "female": "female",
+            "f": "female",
+            "2": "female",
+            "male": "male",
+            "m": "male",
+            "1": "male",
+        }
+    )
+    missing = lowered.isin(
+        {
+            "",
+            "nan",
+            "none",
+            "null",
+            "na",
+            "n/a",
+            "missing",
+            "no matching concept",
+            "unknown",
+            "skip",
+            "pmi: skip",
+            "prefer not to answer",
+            "pmi: prefer not to answer",
+        }
+    )
+    normalized = normalized.where(~missing, "missing")
+    return normalized.fillna("other_or_unknown")
+
+
 def _prepare_baseline_local(config: ProjectConfig) -> pd.DataFrame:
     if not config.phenotype.tables.cohort_table:
         raise ValueError("A local cohort_table is required for non-BigQuery cohort builds.")
@@ -56,11 +89,14 @@ def _prepare_baseline_local(config: ProjectConfig) -> pd.DataFrame:
         if config.phenotype.age_column in raw.columns
         else np.nan
     )
-    base["is_female"] = (
-        _normalize_sex(raw[config.phenotype.sex_column])
-        if config.phenotype.sex_column in raw.columns
-        else np.nan
-    )
+    if config.phenotype.sex_column in raw.columns:
+        base["gender_concept_name"] = raw[config.phenotype.sex_column].astype(str)
+        base["sex_category"] = _normalize_sex_category(raw[config.phenotype.sex_column])
+        base["is_female"] = _normalize_sex(raw[config.phenotype.sex_column])
+    else:
+        base["gender_concept_name"] = pd.Series(np.nan, index=raw.index)
+        base["sex_category"] = pd.Series("missing", index=raw.index)
+        base["is_female"] = np.nan
     return base
 
 
@@ -77,6 +113,10 @@ def _prepare_baseline_bigquery(config: ProjectConfig) -> pd.DataFrame:
     frame["year_of_birth"] = pd.to_numeric(frame.get("year_of_birth"), errors="coerce")
     frame["age_raw"] = pd.to_numeric(frame.get("age_raw"), errors="coerce")
     frame["is_female"] = pd.to_numeric(frame.get("is_female"), errors="coerce")
+    if "gender_concept_name" not in frame.columns:
+        frame["gender_concept_name"] = np.nan
+    if "sex_category" not in frame.columns:
+        frame["sex_category"] = "missing"
     return frame
 
 

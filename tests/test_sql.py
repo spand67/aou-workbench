@@ -31,6 +31,8 @@ class SqlRenderingTests(unittest.TestCase):
         self.assertIn("omop_condition_record_dates", covariate_sql)
         self.assertIn("condition_source_concept_id", covariate_sql)
         self.assertIn("eligible_ehr_denominator", covariate_sql)
+        self.assertIn("gender_concept_name", covariate_sql)
+        self.assertIn("sex_category", covariate_sql)
         cofactor_sql = render_clinical_cofactor_events_sql(config)
         self.assertIn("'sepsis' AS cofactor", cofactor_sql)
         self.assertIn("DATE(co.condition_start_date) AS condition_date", cofactor_sql)

@@ -214,6 +214,15 @@ SELECT
   CAST(NULL AS DATE) AS baseline_index_date,
   SAFE_CAST(p.year_of_birth AS FLOAT64) AS year_of_birth,
   SAFE_CAST(EXTRACT(YEAR FROM CURRENT_DATE()) - p.year_of_birth AS FLOAT64) AS age_raw,
+  g.concept_name AS gender_concept_name,
+  CASE
+    WHEN LOWER(g.concept_name) = 'female' THEN 'female'
+    WHEN LOWER(g.concept_name) = 'male' THEN 'male'
+    WHEN g.concept_name IS NULL
+      OR LOWER(g.concept_name) IN ('', 'no matching concept', 'none', 'unknown', 'skip', 'pmi: skip', 'prefer not to answer', 'pmi: prefer not to answer')
+      THEN 'missing'
+    ELSE 'other_or_unknown'
+  END AS sex_category,
   CASE
     WHEN LOWER(g.concept_name) = 'female' THEN 1.0
     WHEN LOWER(g.concept_name) = 'male' THEN 0.0

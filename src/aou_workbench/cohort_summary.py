@@ -91,6 +91,74 @@ def _categorical_series(frame: pd.DataFrame, column: str) -> pd.Series:
     return frame.get(column, pd.Series(dtype=object)).dropna().astype(str)
 
 
+def _normalize_category_values(series: pd.Series) -> pd.Series:
+    normalized = series.astype(str).str.lower().str.strip()
+    normalized = normalized.replace(
+        {
+            "": "missing",
+            "nan": "missing",
+            "none": "missing",
+            "null": "missing",
+            "na": "missing",
+            "n/a": "missing",
+            "no matching concept": "missing",
+            "unknown": "missing",
+            "skip": "missing",
+            "pmi: skip": "missing",
+            "prefer not to answer": "missing",
+            "pmi: prefer not to answer": "missing",
+            "f": "female",
+            "2": "female",
+            "m": "male",
+            "1": "male",
+            "other": "other_or_unknown",
+            "other/unknown": "other_or_unknown",
+        }
+    )
+    return normalized
+
+
+def _sex_category_series(frame: pd.DataFrame) -> pd.Series:
+    if "sex_category" in frame.columns:
+        values = _normalize_category_values(frame["sex_category"])
+    elif "gender_concept_name" in frame.columns:
+        values = _normalize_category_values(frame["gender_concept_name"])
+    elif "is_female" in frame.columns:
+        numeric = pd.to_numeric(frame["is_female"], errors="coerce")
+        values = pd.Series("missing", index=frame.index, dtype=object)
+        values.loc[numeric == 1] = "female"
+        values.loc[numeric == 0] = "male"
+    else:
+        values = pd.Series("missing", index=frame.index, dtype=object)
+    values = values.where(values.isin({"female", "male", "missing"}), "other_or_unknown")
+    return values
+
+
+def _has_sex_information(frame: pd.DataFrame) -> bool:
+    return any(column in frame.columns for column in ("sex_category", "gender_concept_name", "is_female"))
+
+
+def _ordered_categories(series_list: list[pd.Series], preferred: list[str]) -> list[str]:
+    observed = {
+        value
+        for series in series_list
+        for value in series.dropna().astype(str).tolist()
+        if value.strip()
+    }
+    return [value for value in preferred if value in observed] + sorted(observed.difference(preferred))
+
+
+def _format_category_from_series(series: pd.Series, value: str) -> str:
+    if series.empty:
+        return _empty_value()
+    count = int((series == value).sum())
+    return f"{count} ({(100.0 * count / len(series)):.1f}%)"
+
+
+def _display_category(value: str) -> str:
+    return value.replace("_or_", "/").replace("_", " ")
+
+
 def _format_mean_sd(frame: pd.DataFrame, column: str) -> str:
     values = _numeric_series(frame, column)
     if values.empty:
@@ -364,13 +432,30 @@ def build_matched_table1(config: ProjectConfig, matched_df: pd.DataFrame) -> pd.
             return
         left = _binary_series(cases, column)
         right = _binary_series(controls, column)
+        add_binary_values(
+            section,
+            label,
+            left,
+            right,
+            _format_binary(cases, column),
+            _format_binary(controls, column),
+        )
+
+    def add_binary_values(
+        section: str,
+        label: str,
+        left: pd.Series,
+        right: pd.Series,
+        case_text: str,
+        control_text: str,
+    ) -> None:
         effect, low, high = _odds_ratio_ci(left, right)
         rows.append(
             {
                 "section": section,
                 "variable": label,
-                "matched_cases": _format_binary(cases, column),
-                "matched_controls": _format_binary(controls, column),
+                "matched_cases": case_text,
+                "matched_controls": control_text,
                 "effect_measure": "odds_ratio",
                 "effect_size": _format_effect(effect),
                 "ci_95": _format_ci(low, high),
@@ -380,7 +465,37 @@ def build_matched_table1(config: ProjectConfig, matched_df: pd.DataFrame) -> pd.
         )
 
     add_continuous("Demographics", "Age at index, mean (SD)", "age_at_index")
-    add_binary("Demographics", "Female sex, n (%)", "is_female")
+    if _has_sex_information(matched_df):
+        sex_cases = _sex_category_series(cases)
+        sex_controls = _sex_category_series(controls)
+        sex_categories = _ordered_categories(
+            [sex_cases, sex_controls],
+            ["female", "male", "other_or_unknown", "missing"],
+        )
+        rows.append(
+            {
+                "section": "Demographics",
+                "variable": "Sex category distribution, overall",
+                "matched_cases": "",
+                "matched_controls": "",
+                "effect_measure": "max_category_smd",
+                "effect_size": _format_smd(_categorical_smd(sex_cases, sex_controls, sex_categories)),
+                "ci_95": "",
+                "smd": _format_smd(_categorical_smd(sex_cases, sex_controls, sex_categories)),
+                "p_value": _format_p_value(_categorical_p_value(sex_cases, sex_controls, sex_categories)),
+            }
+        )
+        for category in sex_categories:
+            left = (sex_cases == category).astype(float)
+            right = (sex_controls == category).astype(float)
+            add_binary_values(
+                "Demographics",
+                f"Sex: {_display_category(category)}, n (%)",
+                left,
+                right,
+                _format_category_from_series(sex_cases, category),
+                _format_category_from_series(sex_controls, category),
+            )
 
     ancestry = "ancestry_pred"
     if ancestry in matched_df.columns:
@@ -576,23 +691,51 @@ def summarize_clinical_demographics(
         ),
     )
 
-    unmatched_female_left = _binary_series(groups[_UNMATCHED_CASES], "is_female")
-    unmatched_female_right = _binary_series(groups[_UNMATCHED_CONTROLS], "is_female")
-    matched_female_left = _binary_series(groups[_MATCHED_CASES], "is_female")
-    matched_female_right = _binary_series(groups[_MATCHED_CONTROLS], "is_female")
-    add_row(
-        "Demographics",
-        "Female sex, n (%)",
-        lambda frame: _format_binary(frame, "is_female"),
-        unmatched_metrics=(
-            _binary_smd(unmatched_female_left, unmatched_female_right),
-            _binary_p_value(unmatched_female_left, unmatched_female_right),
-        ),
-        matched_metrics=(
-            _binary_smd(matched_female_left, matched_female_right),
-            _binary_p_value(matched_female_left, matched_female_right),
-        ),
-    )
+    if _has_sex_information(built_wgs) or _has_sex_information(matched_wgs):
+        unmatched_sex_left = _sex_category_series(groups[_UNMATCHED_CASES])
+        unmatched_sex_right = _sex_category_series(groups[_UNMATCHED_CONTROLS])
+        matched_sex_left = _sex_category_series(groups[_MATCHED_CASES])
+        matched_sex_right = _sex_category_series(groups[_MATCHED_CONTROLS])
+        sex_values = _ordered_categories(
+            [unmatched_sex_left, unmatched_sex_right, matched_sex_left, matched_sex_right],
+            ["female", "male", "other_or_unknown", "missing"],
+        )
+        add_row(
+            "Demographics",
+            "Sex category distribution, overall",
+            lambda _frame: _empty_value(),
+            unmatched_metrics=(
+                _categorical_smd(unmatched_sex_left, unmatched_sex_right, sex_values),
+                _categorical_p_value(unmatched_sex_left, unmatched_sex_right, sex_values),
+            ),
+            matched_metrics=(
+                _categorical_smd(matched_sex_left, matched_sex_right, sex_values),
+                _categorical_p_value(matched_sex_left, matched_sex_right, sex_values),
+            ),
+        )
+        for sex_category in sex_values:
+            add_row(
+                "Demographics",
+                f"Sex: {_display_category(sex_category)}, n (%)",
+                lambda frame, sex_category=sex_category: _format_category_from_series(
+                    _sex_category_series(frame),
+                    sex_category,
+                ),
+                unmatched_metrics=(
+                    _binary_smd(
+                        (unmatched_sex_left == sex_category).astype(float),
+                        (unmatched_sex_right == sex_category).astype(float),
+                    ),
+                    np.nan,
+                ),
+                matched_metrics=(
+                    _binary_smd(
+                        (matched_sex_left == sex_category).astype(float),
+                        (matched_sex_right == sex_category).astype(float),
+                    ),
+                    np.nan,
+                ),
+            )
 
     ancestry_values = sorted(
         {
