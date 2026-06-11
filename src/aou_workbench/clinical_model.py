@@ -18,8 +18,6 @@ from .paths import ProjectPaths, join_path
 
 _CONTINUOUS_FEATURES: tuple[tuple[str, str, Callable[[pd.Series], pd.Series]], ...] = (
     ("age_at_index", "age_at_index_per_sd", lambda values: values),
-    ("observation_days", "log_observation_days_per_sd", np.log1p),
-    ("omop_condition_record_dates", "log_condition_record_dates_per_sd", np.log1p),
 )
 _BINARY_FEATURES: tuple[str, ...] = ()
 _CATEGORICAL_FEATURES = {
@@ -442,8 +440,8 @@ def _write_report(
         "",
         f"- Eligibility flag: `{eligibility_flag}`",
         "- Model: L2-regularized logistic regression",
-        "- Primary predictors: age, observation depth, condition-record depth, sex category, ancestry category",
-        "- Sepsis, renal injury, crush injury, peri-index variables, and post-index variables are not used as predictors.",
+        "- Primary predictors: age, sex category, ancestry category",
+        "- Observation depth, condition-record depth, sepsis, renal injury, crush injury, peri-index variables, and post-index variables are not used as predictors.",
         "",
         "## Metrics",
         "",

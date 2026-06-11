@@ -89,7 +89,7 @@ Run the first clinical-only prediction model:
 aou-workbench run-clinical-model
 ```
 
-This trains an L2-regularized logistic model on the primary non-traumatic training set and evaluates it once on the held-out test set. The model uses a deliberately simple baseline feature set: age, observation depth, condition-record depth, sex category, and ancestry category. Sepsis and renal injury are retained for cohort characterization and sensitivity interpretation, but are not used as clinical model predictors. Metrics, coefficients, predictions, calibration, ROC, and precision-recall outputs are written under `clinical/model/`.
+This trains an L2-regularized logistic model on the primary non-traumatic training set and evaluates it once on the held-out test set. The model uses a deliberately simple baseline feature set: age, sex category, and ancestry category. Observation depth, condition-record depth, sepsis, and renal injury are retained for cohort characterization and sensitivity interpretation, but are not used as clinical model predictors. Metrics, coefficients, predictions, calibration, ROC, and precision-recall outputs are written under `clinical/model/`.
 
 Run the first reduced-marker Hail GWAS pilot:
 

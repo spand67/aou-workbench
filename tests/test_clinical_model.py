@@ -52,7 +52,9 @@ class ClinicalModelTests(unittest.TestCase):
         self.assertNotIn("near_preindex", feature_text)
         self.assertNotIn("periindex", feature_text)
         self.assertNotIn("postindex", feature_text)
-        self.assertIn("Primary predictors: age, observation depth, condition-record depth, sex category, ancestry category", report_text)
+        self.assertNotIn("observation_days", feature_text)
+        self.assertNotIn("condition_record", feature_text)
+        self.assertIn("Primary predictors: age, sex category, ancestry category", report_text)
 
 
 if __name__ == "__main__":
