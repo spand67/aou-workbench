@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 
 from aou_workbench.config import load_project_config
@@ -24,3 +25,21 @@ class ConfigLoadingTests(unittest.TestCase):
         self.assertEqual(config.phenotype.broad.name, "broad")
         self.assertEqual(config.cohort.primary_case_tier, "broad")
         self.assertTrue(config.config_hash)
+
+    def test_rhabdo_stage4_config_uses_primary_gwas_covariates(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        config = load_project_config(
+            workbench_path=str(repo_root / "configs" / "workbench.yaml"),
+            phenotype_path=str(repo_root / "configs" / "rhabdo" / "phenotype.yaml"),
+            cohort_path=str(repo_root / "configs" / "rhabdo" / "cohort.yaml"),
+            panel_path=str(repo_root / "configs" / "rhabdo" / "panel.yaml"),
+            analysis_path=str(repo_root / "configs" / "rhabdo" / "analysis.yaml"),
+        )
+
+        self.assertEqual(
+            config.analysis.stage4.covariates,
+            ("age_at_index", "is_female", "pc1", "pc2", "pc3", "pc4", "pc5"),
+        )
+        self.assertNotIn("preindex_crush_injury", config.analysis.stage4.covariates)
+        self.assertNotIn("preindex_sepsis", config.analysis.stage4.covariates)
+        self.assertNotIn("preindex_renal_injury", config.analysis.stage4.covariates)
