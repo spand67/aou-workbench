@@ -100,6 +100,18 @@ from .preindex_profile import (
     preindex_summary_path,
     profile_preindex_case_data,
 )
+from .prs_diagnostics import (
+    prs_diagnostics_ancestry_path,
+    prs_diagnostics_bootstrap_ci_path,
+    prs_diagnostics_calibration_path,
+    prs_diagnostics_cofactor_path,
+    prs_diagnostics_deciles_path,
+    prs_diagnostics_definite_path,
+    prs_diagnostics_overall_metrics_path,
+    prs_diagnostics_qc_path,
+    prs_diagnostics_report_path,
+    run_prs_diagnostics,
+)
 from .preflight import apply_runtime_defaults, format_preflight_report, run_preflight_checks
 from .regenie import prepare_regenie_inputs
 from .stage1_prepare import prepare_stage1_variant_table, prepare_wgs_sample_manifest
@@ -621,6 +633,49 @@ def _build_parser() -> argparse.ArgumentParser:
     clinical_prs_parser.add_argument("--threads", type=int, default=None, help="Optional PLINK2 thread count for train scoring.")
     clinical_prs_parser.add_argument("--memory-mb", type=int, default=None, help="Optional PLINK2 memory limit in MiB.")
 
+    prs_diagnostics_parser = subparsers.add_parser(
+        "diagnose-prs",
+        help="Generate PRS diagnostics from existing PRS and clinical+PRS outputs without rerunning GWAS or scoring.",
+    )
+    _add_config_arguments(prs_diagnostics_parser)
+    prs_diagnostics_parser.add_argument(
+        "--gwas-label",
+        required=True,
+        help="Microarray PLINK GWAS label used as the PRS source.",
+    )
+    prs_diagnostics_parser.add_argument(
+        "--prs-label",
+        default="test-clumped-p001",
+        help="Existing PRS label under stage4/microarray_plink/<gwas-label>/prs/. Default: test-clumped-p001.",
+    )
+    prs_diagnostics_parser.add_argument(
+        "--clinical-prs-label",
+        default="clinical_prs_p001",
+        help="Existing clinical+PRS model label under clinical/clinical_prs_model/. Use empty string to skip clinical+PRS diagnostics.",
+    )
+    prs_diagnostics_parser.add_argument(
+        "--threshold-label",
+        default="p0_01",
+        help="PRS threshold label to diagnose. Default: p0_01.",
+    )
+    prs_diagnostics_parser.add_argument(
+        "--bootstrap-iterations",
+        type=int,
+        default=200,
+        help="Bootstrap iterations for test-set confidence intervals. Default: 200.",
+    )
+    prs_diagnostics_parser.add_argument(
+        "--seed",
+        type=int,
+        default=20260611,
+        help="Random seed for bootstrap intervals. Default: 20260611.",
+    )
+    prs_diagnostics_parser.add_argument(
+        "--label",
+        default="prs_p001_diagnostics",
+        help="Output label under clinical/prs_diagnostics/. Default: prs_p001_diagnostics.",
+    )
+
     preindex_parser = subparsers.add_parser(
         "profile-preindex-cases",
         help="Summarize what condition, lab, and biomarker data are available before rhabdo index dates for cases.",
@@ -1012,6 +1067,33 @@ def main(argv: list[str] | None = None) -> int:
         print(f"roc: {clinical_prs_model_roc_svg_path(paths, label)}")
         print(f"precision_recall: {clinical_prs_model_pr_svg_path(paths, label)}")
         print(f"calibration_plot: {clinical_prs_model_calibration_svg_path(paths, label)}")
+        return 0
+
+    if args.command == "diagnose-prs":
+        effective = apply_runtime_defaults(config)
+        paths = build_output_paths(effective)
+        clinical_prs_label = args.clinical_prs_label or None
+        outputs = run_prs_diagnostics(
+            effective,
+            paths,
+            gwas_label=args.gwas_label,
+            prs_label=args.prs_label,
+            clinical_prs_label=clinical_prs_label,
+            threshold_label=args.threshold_label,
+            label=args.label,
+            bootstrap_iterations=args.bootstrap_iterations,
+            seed=args.seed,
+        )
+        print(f"PRS diagnostics overall rows: {outputs['overall'].shape[0]}")
+        print(f"overall: {prs_diagnostics_overall_metrics_path(paths, args.label)}")
+        print(f"bootstrap_ci: {prs_diagnostics_bootstrap_ci_path(paths, args.label)}")
+        print(f"deciles: {prs_diagnostics_deciles_path(paths, args.label)}")
+        print(f"ancestry: {prs_diagnostics_ancestry_path(paths, args.label)}")
+        print(f"definite_sensitivity: {prs_diagnostics_definite_path(paths, args.label)}")
+        print(f"cofactor_strata: {prs_diagnostics_cofactor_path(paths, args.label)}")
+        print(f"calibration: {prs_diagnostics_calibration_path(paths, args.label)}")
+        print(f"qc: {prs_diagnostics_qc_path(paths, args.label)}")
+        print(f"report: {prs_diagnostics_report_path(paths, args.label)}")
         return 0
 
     if args.command == "profile-preindex-cases":

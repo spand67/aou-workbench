@@ -187,6 +187,20 @@ aou-workbench run-clinical-prs-model \
 
 This option deliberately uses the train-derived PRS on the training participants to fit the combined logistic model, then evaluates once on the held-out test split. Treat train metrics and the PRS coefficient as optimistic; use the test metrics as the main readout. Outputs are written under `clinical/clinical_prs_model/<label>/`.
 
+Generate post hoc PRS diagnostics from existing outputs without rerunning GWAS or PLINK scoring:
+
+```bash
+aou-workbench diagnose-prs \
+  --gwas-label microarray_plink_autosomes_maf05_train_qc \
+  --prs-label test-clumped-p001 \
+  --clinical-prs-label clinical_prs_p001 \
+  --threshold-label p0_01 \
+  --bootstrap-iterations 500 \
+  --label prs_p001_diagnostics
+```
+
+This writes overall PRS/clinical+PRS metrics, bootstrap confidence intervals, PRS deciles, ancestry-stratified metrics, definite-case sensitivity, sepsis/renal-injury strata, calibration/recalibration tables, QC JSON, and a Markdown report under `clinical/prs_diagnostics/<label>/`.
+
 If submitting the pilot as a Dataproc job, include requester-pays Spark/Hadoop properties for the AoU controlled bucket:
 
 ```bash
