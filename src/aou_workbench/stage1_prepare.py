@@ -8,7 +8,7 @@ import pandas as pd
 
 from .config import ProjectConfig, TargetVariant
 from .hail_utils import ensure_hail
-from .io_utils import ensure_parent_dir, write_dataframe, write_json
+from .io_utils import ensure_parent_dir, query_bigquery_dataframe, write_dataframe, write_json
 from .preflight import apply_runtime_defaults
 
 
@@ -19,15 +19,19 @@ def stage1_sample_manifest_path(variant_table_path: str) -> str:
     return f"{variant_table_path}.samples.tsv"
 
 
-def _split_matrix_table_path(path: str) -> str:
-    if "/multiMT/" in path:
-        return path.replace("/multiMT/", "/splitMT/")
-    return path
-
-
 def _sample_manifest_frame(sample_ids: list[str]) -> pd.DataFrame:
     ids = sorted({str(sample_id).strip() for sample_id in sample_ids if str(sample_id).strip()})
     return pd.DataFrame({"person_id": ids})
+
+
+def _wgs_sample_manifest_sql(config: ProjectConfig) -> str:
+    cdr = config.workbench.workspace_cdr or "{{workspace_cdr}}"
+    return f"""
+SELECT
+  CAST(person_id AS STRING) AS person_id
+FROM `{cdr}.cb_search_person`
+WHERE has_whole_genome_variant = 1
+""".strip()
 
 
 def _panel_targets_frame(targets: tuple[TargetVariant, ...]) -> pd.DataFrame:
@@ -251,7 +255,7 @@ def prepare_stage1_variant_table(
 
 
 def prepare_wgs_sample_manifest(config: ProjectConfig) -> pd.DataFrame:
-    """Write the WGS/ACAF sample manifest used by downstream WGS restrictions."""
+    """Write the CDR WGS sample manifest used by downstream WGS restrictions."""
     config = apply_runtime_defaults(config)
     stage = config.analysis.stage1
     if stage is None:
@@ -260,16 +264,10 @@ def prepare_wgs_sample_manifest(config: ProjectConfig) -> pd.DataFrame:
     sample_manifest_path = stage1_sample_manifest_path(stage.variant_table)
     ensure_parent_dir(sample_manifest_path)
 
-    hl = ensure_hail(
-        requester_pays_project=config.workbench.requester_pays_project,
-        requester_pays_buckets=config.workbench.requester_pays_buckets,
-    )
-    acaf_mt_path = _split_matrix_table_path(config.workbench.acaf_mt_path)
-    print(f"Reading ACAF MatrixTable columns from {acaf_mt_path}", flush=True)
-    mt = hl.read_matrix_table(acaf_mt_path)
-    cols = mt.cols().key_by()
-    rows = cols.select(person_id=cols.s).collect()
-    manifest = _sample_manifest_frame([row.person_id for row in rows])
+    sql = _wgs_sample_manifest_sql(config)
+    print("Reading WGS availability from cb_search_person.has_whole_genome_variant", flush=True)
+    frame = query_bigquery_dataframe(sql)
+    manifest = _sample_manifest_frame(frame["person_id"].astype(str).tolist() if "person_id" in frame.columns else [])
     write_dataframe(manifest, sample_manifest_path)
 
     metadata_path = str(Path(sample_manifest_path).with_suffix(Path(sample_manifest_path).suffix + ".meta.json"))
@@ -277,11 +275,12 @@ def prepare_wgs_sample_manifest(config: ProjectConfig) -> pd.DataFrame:
         {
             "sample_manifest_path": sample_manifest_path,
             "sample_count": int(len(manifest)),
-            "acaf_mt_path": acaf_mt_path,
+            "source_table": f"{config.workbench.workspace_cdr}.cb_search_person",
+            "source_field": "has_whole_genome_variant",
         },
         metadata_path,
     )
-    print(f"Wrote {len(manifest)} WGS/ACAF sample IDs to {sample_manifest_path}", flush=True)
+    print(f"Wrote {len(manifest)} WGS sample IDs to {sample_manifest_path}", flush=True)
     return manifest
 
 
@@ -293,6 +292,7 @@ __all__ = [
     "_matched_person_ids",
     "_panel_targets_frame",
     "_sample_manifest_frame",
+    "_wgs_sample_manifest_sql",
     "stage1_sample_manifest_path",
     "_target_interval_strings",
 ]

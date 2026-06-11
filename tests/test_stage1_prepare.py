@@ -12,6 +12,7 @@ from aou_workbench.stage1_prepare import (
     _panel_targets_frame,
     _sample_manifest_frame,
     _target_interval_strings,
+    _wgs_sample_manifest_sql,
     stage1_sample_manifest_path,
 )
 from tests.support import build_demo_project_tree
@@ -55,6 +56,13 @@ class Stage1PrepareTests(unittest.TestCase):
         frame = _sample_manifest_frame(["5", "2", "5", "", "  ", 1])
 
         self.assertEqual(frame["person_id"].tolist(), ["1", "2", "5"])
+
+    def test_wgs_sample_manifest_sql_uses_cb_search_person_flag(self) -> None:
+        sql = _wgs_sample_manifest_sql(self.config)
+
+        self.assertIn("cb_search_person", sql)
+        self.assertIn("has_whole_genome_variant = 1", sql)
+        self.assertIn("CAST(person_id AS STRING) AS person_id", sql)
 
     def test_target_interval_strings_pad_and_sort_targets(self) -> None:
         frame = _panel_targets_frame(self.config.panel.a_priori_variants)

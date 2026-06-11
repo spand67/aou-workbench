@@ -74,7 +74,7 @@ aou-workbench match-controls --require-wgs
 aou-workbench characterize-cohort --require-wgs
 ```
 
-`prepare-wgs-manifest` reads only the sample IDs from the AoU ACAF threshold split MatrixTable and writes the manifest path used by downstream WGS restrictions. The `--require-wgs` commands then save a WGS-restricted built cohort, matched cohort, CONSORT, Table 1, split summaries, and clinical model input. This is the preferred setup before any GWAS or PRS work.
+`prepare-wgs-manifest` reads the CDR WGS availability flag from `cb_search_person.has_whole_genome_variant` and writes the manifest path used by downstream WGS restrictions. The `--require-wgs` commands then save a WGS-restricted built cohort, matched cohort, CONSORT, Table 1, split summaries, and clinical model input. Hail/ACAF MatrixTable overlap is checked later by the GWAS runner, but the cohort denominator starts from the CDR WGS flag. This is the preferred setup before any GWAS or PRS work.
 
 Characterize the inclusive case-control cohort before genomic modeling:
 
