@@ -213,6 +213,18 @@ Rebuild the cross-analysis dashboard and Markdown digest from existing outputs w
 aou-workbench report
 ```
 
+Build the supervisor-facing presentation dashboard from existing aggregate outputs:
+
+```bash
+aou-workbench presentation-dashboard \
+  --gwas-label microarray_plink_autosomes_maf05_train_qc \
+  --prs-label test-clumped-p001 \
+  --clinical-prs-label clinical_prs_p001 \
+  --diagnostics-label prs_p001_diagnostics
+```
+
+This writes `rhabdo_presentation_dashboard.html` and presentation-specific SVG/table assets under the configured run root. It does not rerun matching, modeling, GWAS, or PRS scoring. The dashboard embeds the CONSORT-style flow, case/control definitions, train/test Table 1, one-year sepsis/renal-injury timing bins, microarray GWAS parameters, Manhattan plot, training PRS distribution, model comparison metrics, and clinical+PRS coefficient table. Missing optional outputs are shown as placeholders so partial runs can still be reviewed.
+
 Prepare and run Stage 1 with the direct WGS VDS workflow:
 
 ```bash

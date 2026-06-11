@@ -100,6 +100,7 @@ from .preindex_profile import (
     preindex_summary_path,
     profile_preindex_case_data,
 )
+from .presentation_dashboard import render_presentation_dashboard
 from .prs_diagnostics import (
     prs_diagnostics_ancestry_path,
     prs_diagnostics_bootstrap_ci_path,
@@ -509,6 +510,37 @@ def _build_parser() -> argparse.ArgumentParser:
 
     report_parser = subparsers.add_parser("report", help="Rebuild the final markdown report from existing outputs.")
     _add_config_arguments(report_parser)
+
+    presentation_parser = subparsers.add_parser(
+        "presentation-dashboard",
+        help="Write a supervisor-facing static HTML dashboard from existing aggregate outputs.",
+    )
+    _add_config_arguments(presentation_parser)
+    presentation_parser.add_argument(
+        "--gwas-label",
+        default="microarray_plink_autosomes_maf05_train_qc",
+        help="Microarray PLINK GWAS label to summarize. Default: microarray_plink_autosomes_maf05_train_qc.",
+    )
+    presentation_parser.add_argument(
+        "--prs-label",
+        default="test-clumped-p001",
+        help="PRS label under the selected microarray GWAS. Default: test-clumped-p001.",
+    )
+    presentation_parser.add_argument(
+        "--clinical-prs-label",
+        default="clinical_prs_p001",
+        help="Clinical+PRS model label. Default: clinical_prs_p001.",
+    )
+    presentation_parser.add_argument(
+        "--diagnostics-label",
+        default="prs_p001_diagnostics",
+        help="PRS diagnostics label used as a source note. Default: prs_p001_diagnostics.",
+    )
+    presentation_parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional dashboard HTML output path. Default: outputs/<run>/rhabdo_presentation_dashboard.html.",
+    )
 
     summary_parser = subparsers.add_parser(
         "summarize-cohort",
@@ -940,6 +972,21 @@ def main(argv: list[str] | None = None) -> int:
         paths = render_existing_report(config)
         print(f"Final report: {paths.final_report_md}")
         print(f"Dashboard: {paths.final_dashboard_html}")
+        return 0
+
+    if args.command == "presentation-dashboard":
+        effective = apply_runtime_defaults(config)
+        paths = build_output_paths(effective)
+        output = render_presentation_dashboard(
+            effective,
+            paths,
+            gwas_label=args.gwas_label,
+            prs_label=args.prs_label,
+            clinical_prs_label=args.clinical_prs_label,
+            diagnostics_label=args.diagnostics_label,
+            output_path=args.output,
+        )
+        print(f"Presentation dashboard: {output}")
         return 0
 
     if args.command == "summarize-cohort":
