@@ -200,8 +200,8 @@ class MicroarrayPlinkPrsTests(unittest.TestCase):
         self.assertEqual(args.score_split, "test")
         self.assertEqual(args.clump_r2, 0.1)
         self.assertEqual(args.clump_kb, 250)
-        self.assertEqual(args.clump_p1, 1.0)
-        self.assertEqual(args.clump_p2, 1.0)
+        self.assertEqual(args.clump_p1, 0.01)
+        self.assertEqual(args.clump_p2, 0.01)
         self.assertEqual(microarray_prs_default_label("test"), "test_clumped_threshold_grid")
         self.assertEqual(args.thresholds, "0.01")
 

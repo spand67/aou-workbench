@@ -151,8 +151,8 @@ aou-workbench run-microarray-plink-prs \
   --score-split test \
   --clump-r2 0.1 \
   --clump-kb 250 \
-  --clump-p1 1.0 \
-  --clump-p2 1.0 \
+  --clump-p1 0.01 \
+  --clump-p2 0.01 \
   --thresholds 0.01 \
   --threads "$(nproc)" \
   --label test_clumped_threshold_grid

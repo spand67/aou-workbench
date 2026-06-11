@@ -457,8 +457,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     microarray_prs_parser.add_argument("--clump-r2", type=float, default=0.1, help="PLINK clump r2 threshold. Default: 0.1.")
     microarray_prs_parser.add_argument("--clump-kb", type=int, default=250, help="PLINK clump window in kb. Default: 250.")
-    microarray_prs_parser.add_argument("--clump-p1", type=float, default=1.0, help="PLINK clump index p threshold. Default: 1.0.")
-    microarray_prs_parser.add_argument("--clump-p2", type=float, default=1.0, help="PLINK clump secondary p threshold. Default: 1.0.")
+    microarray_prs_parser.add_argument("--clump-p1", type=float, default=0.01, help="PLINK clump index p threshold. Default: 0.01.")
+    microarray_prs_parser.add_argument("--clump-p2", type=float, default=0.01, help="PLINK clump secondary p threshold. Default: 0.01.")
     microarray_prs_parser.add_argument(
         "--thresholds",
         default=",".join(f"{value:g}" for value in DEFAULT_PRS_THRESHOLDS),
