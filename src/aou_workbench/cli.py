@@ -68,6 +68,7 @@ from .stage4_hail_gwas import (
     hail_pilot_lead_hits_path,
     hail_pilot_manhattan_path,
     hail_pilot_qc_path,
+    hail_pilot_default_label,
     hail_pilot_qq_path,
     hail_pilot_report_path,
     hail_pilot_results_path,
@@ -267,6 +268,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Comma-separated autosome list. Default: 22.",
     )
     hail_pilot_parser.add_argument(
+        "--genotype-source",
+        choices=["acaf", "microarray"],
+        default="acaf",
+        help="Genotype MatrixTable source for the pilot. Default: acaf.",
+    )
+    hail_pilot_parser.add_argument(
         "--min-maf",
         type=float,
         default=0.05,
@@ -302,8 +309,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     hail_pilot_parser.add_argument(
         "--label",
-        default="acaf_chr22_maf05_train_qc",
-        help="Output label under stage4/hail_pilot/. Default: acaf_chr22_maf05_train_qc.",
+        default=None,
+        help="Output label under stage4/hail_pilot/. Defaults to <genotype-source>_chr<chromosomes>_maf<min-maf>_train_qc.",
     )
 
     for name in ("run-stage1", "run-stage2", "run-stage3", "run-stage4", "run-all"):
@@ -473,6 +480,7 @@ def main(argv: list[str] | None = None) -> int:
             eligibility_flag=args.eligibility_flag,
         )
         chromosomes = [value.strip() for value in args.chromosomes.split(",") if value.strip()]
+        label = args.label or hail_pilot_default_label(args.genotype_source, chromosomes, min_maf=args.min_maf)
         full, hits = run_stage4_hail_pilot_gwas(
             effective,
             matched_df,
@@ -484,17 +492,18 @@ def main(argv: list[str] | None = None) -> int:
             hwe_p_control=args.hwe_p_control,
             analysis_split=args.analysis_split,
             eligibility_flag=args.eligibility_flag,
-            label=args.label,
+            label=label,
+            genotype_source=args.genotype_source,
         )
         print(f"Hail pilot GWAS variants tested: {full.shape[0]}")
         print(f"Hail pilot GWAS lead hits: {hits.shape[0]}")
-        print(f"results: {hail_pilot_results_path(paths, args.label)}")
-        print(f"lead_hits: {hail_pilot_lead_hits_path(paths, args.label)}")
-        print(f"qc: {hail_pilot_qc_path(paths, args.label)}")
-        print(f"variant_qc_summary: {hail_pilot_variant_qc_summary_path(paths, args.label)}")
-        print(f"report: {hail_pilot_report_path(paths, args.label)}")
-        print(f"manhattan: {hail_pilot_manhattan_path(paths, args.label)}")
-        print(f"qq: {hail_pilot_qq_path(paths, args.label)}")
+        print(f"results: {hail_pilot_results_path(paths, label)}")
+        print(f"lead_hits: {hail_pilot_lead_hits_path(paths, label)}")
+        print(f"qc: {hail_pilot_qc_path(paths, label)}")
+        print(f"variant_qc_summary: {hail_pilot_variant_qc_summary_path(paths, label)}")
+        print(f"report: {hail_pilot_report_path(paths, label)}")
+        print(f"manhattan: {hail_pilot_manhattan_path(paths, label)}")
+        print(f"qq: {hail_pilot_qq_path(paths, label)}")
         return 0
 
     if args.command == "run-all":

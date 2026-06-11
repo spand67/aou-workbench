@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from aou_workbench.config import load_project_config
+from aou_workbench.config import DEFAULT_MICROARRAY_MT_PATH, load_project_config
 from tests.support import build_demo_project_tree
 
 
@@ -24,6 +24,7 @@ class ConfigLoadingTests(unittest.TestCase):
         self.assertEqual(config.phenotype.definite.measurement_window_end_days, 45)
         self.assertEqual(config.phenotype.broad.name, "broad")
         self.assertEqual(config.cohort.primary_case_tier, "broad")
+        self.assertEqual(config.workbench.microarray_mt_path, DEFAULT_MICROARRAY_MT_PATH)
         self.assertTrue(config.config_hash)
 
     def test_rhabdo_stage4_config_uses_primary_gwas_covariates(self) -> None:

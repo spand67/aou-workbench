@@ -20,6 +20,7 @@ from .svg import write_manhattan_svg, write_qq_svg
 
 PILOT_COVARIATES = ("age_at_index", "is_female", "pc1", "pc2", "pc3", "pc4", "pc5")
 PILOT_CASE_CONTROL_REQUIRED_COLUMNS = ("match_group_id", "case_tier", "eligible_control")
+PILOT_GENOTYPE_SOURCES = ("acaf", "microarray")
 
 
 def hail_stage4_full_results_path(paths: ProjectPaths) -> str:
@@ -82,6 +83,57 @@ def _split_acaf_mt_path(path: str) -> str:
     if "/multiMT/" in path:
         return path.replace("/multiMT/", "/splitMT/")
     return path
+
+
+def hail_pilot_default_label(
+    genotype_source: str,
+    chromosomes: list[str] | None,
+    *,
+    min_maf: float = 0.05,
+) -> str:
+    source = _normalize_genotype_source(genotype_source)
+    chromosome_values = _normalize_autosomal_chromosomes(chromosomes or ["22"])
+    chromosome_label = "chr" + "-".join(chromosome_values)
+    maf_text = f"{min_maf:g}"
+    maf_value = maf_text[2:] if maf_text.startswith("0.") else maf_text.replace(".", "")
+    maf_label = f"maf{maf_value}"
+    return f"{source}_{chromosome_label}_{maf_label}_train_qc"
+
+
+def _normalize_genotype_source(genotype_source: str) -> str:
+    source = genotype_source.strip().lower()
+    if source not in PILOT_GENOTYPE_SOURCES:
+        raise ValueError(f"Unsupported Hail pilot genotype source `{genotype_source}`; expected one of: {', '.join(PILOT_GENOTYPE_SOURCES)}")
+    return source
+
+
+def _pilot_genotype_mt_path(config: ProjectConfig, genotype_source: str) -> str:
+    source = _normalize_genotype_source(genotype_source)
+    if source == "microarray":
+        return config.workbench.microarray_mt_path
+    return _split_acaf_mt_path(config.workbench.acaf_mt_path)
+
+
+def _pilot_restricts_to_wgs_manifest(genotype_source: str) -> bool:
+    return _normalize_genotype_source(genotype_source) == "acaf"
+
+
+def _key_matrix_table_by_sample_id(mt, hl):
+    if "s" in mt.col:
+        return mt.key_cols_by("s")
+    col_key_fields = list(mt.col_key)
+    if not col_key_fields:
+        raise RuntimeError("Genotype MatrixTable has no column key and no `s` sample field.")
+    sample_field = col_key_fields[0]
+    return mt.annotate_cols(s=hl.str(getattr(mt, sample_field))).key_cols_by("s")
+
+
+def _matrix_table_gt(mt, hl):
+    if "GT" in mt.entry:
+        return mt.GT
+    if "LGT" in mt.entry and "LA" in mt.entry:
+        return hl.vds.lgt_to_gt(mt.LGT, mt.LA)
+    raise RuntimeError("Genotype MatrixTable must contain GT, or LGT plus LA, for Hail pilot GWAS.")
 
 
 def _normalize_chromosomes(chromosomes: list[str] | None) -> list[str]:
@@ -251,6 +303,7 @@ def _hail_pilot_sample_frame(
     analysis_split: str = "train",
     eligibility_flag: str = "primary_model_eligible",
     covariates: tuple[str, ...] = PILOT_COVARIATES,
+    restrict_to_wgs_manifest: bool = True,
 ) -> tuple[pd.DataFrame, list[str], list[str], list[str], dict[str, int], bool]:
     if "person_id" not in matched_df.columns:
         raise RuntimeError("Matched cohort must contain `person_id` for Hail pilot GWAS.")
@@ -285,7 +338,7 @@ def _hail_pilot_sample_frame(
     counts["after_case_control_definition_controls"] = int(outcome_after_definition.eq(0).sum())
 
     wgs_manifest_used = False
-    if has_wgs_manifest(config):
+    if restrict_to_wgs_manifest and has_wgs_manifest(config):
         sample = restrict_frame_to_ids(sample, wgs_present_ids(config, require=True), id_column="person_id")
         wgs_manifest_used = True
     counts["after_wgs_manifest_participants"] = int(sample["person_id"].nunique())
@@ -422,6 +475,8 @@ def _postprocess_pilot_results(
     hwe_p_control: float,
     sample_counts: dict[str, int],
     wgs_manifest_used: bool,
+    genotype_source: str,
+    genotype_mt_path: str,
     covariates_used: list[str],
     dropped_covariates: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -444,6 +499,8 @@ def _postprocess_pilot_results(
     write_json(
         {
             "pilot_label": label,
+            "genotype_source": genotype_source,
+            "genotype_mt_path": genotype_mt_path,
             "acaf_mt_path": _split_acaf_mt_path(config.workbench.acaf_mt_path),
             "chromosomes_tested": chromosomes,
             "analysis_split": analysis_split,
@@ -466,6 +523,8 @@ def _postprocess_pilot_results(
         title="Stage 4: Hail Pilot GWAS",
         summary_lines=[
             f"- Pilot label: {label}",
+            f"- Genotype source: {genotype_source}",
+            f"- Genotype MatrixTable: {genotype_mt_path}",
             "- Case-control definition: broad rhabdomyolysis cases versus matched eligible controls",
             f"- Analysis split: {analysis_split}",
             f"- Eligibility flag: {eligibility_flag}",
@@ -624,13 +683,18 @@ def run_stage4_hail_pilot_gwas(
     hwe_p_control: float = 1e-6,
     analysis_split: str = "train",
     eligibility_flag: str = "primary_model_eligible",
-    label: str = "acaf_chr22_maf05_train_qc",
+    label: str | None = None,
+    genotype_source: str = "acaf",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     stage = config.analysis.stage4
     if stage is None:
         return pd.DataFrame(), pd.DataFrame()
 
+    source = _normalize_genotype_source(genotype_source)
     chromosome_values = _normalize_autosomal_chromosomes(chromosomes or ["22"])
+    label = label or hail_pilot_default_label(source, chromosome_values, min_maf=min_maf)
+    genotype_mt_path = _pilot_genotype_mt_path(config, source)
+    restrict_to_wgs_manifest = _pilot_restricts_to_wgs_manifest(source)
     (
         sample_df,
         hail_covariates,
@@ -643,6 +707,7 @@ def run_stage4_hail_pilot_gwas(
         config,
         analysis_split=analysis_split,
         eligibility_flag=eligibility_flag,
+        restrict_to_wgs_manifest=restrict_to_wgs_manifest,
     )
     empty_qc = pd.DataFrame(
         columns=["filter", "threshold", "rows_before", "rows_after", "rows_removed"]
@@ -663,6 +728,8 @@ def run_stage4_hail_pilot_gwas(
             hwe_p_control=hwe_p_control,
             sample_counts=sample_counts,
             wgs_manifest_used=wgs_manifest_used,
+            genotype_source=source,
+            genotype_mt_path=genotype_mt_path,
             covariates_used=raw_covariates,
             dropped_covariates=dropped_covariates,
         )
@@ -671,9 +738,9 @@ def run_stage4_hail_pilot_gwas(
         requester_pays_project=config.workbench.requester_pays_project,
         requester_pays_buckets=config.workbench.requester_pays_buckets,
     )
-    acaf_mt_path = _split_acaf_mt_path(config.workbench.acaf_mt_path)
-    print(f"Reading ACAF MT from {acaf_mt_path}", flush=True)
-    mt = hl.read_matrix_table(acaf_mt_path)
+    print(f"Reading {source} MT from {genotype_mt_path}", flush=True)
+    mt = hl.read_matrix_table(genotype_mt_path)
+    mt = _key_matrix_table_by_sample_id(mt, hl)
 
     sample_ht = hl.Table.from_pandas(sample_df).key_by("s")
     intervals = [
@@ -683,8 +750,31 @@ def run_stage4_hail_pilot_gwas(
     mt = hl.filter_intervals(mt, intervals)
     mt = mt.semi_join_cols(sample_ht)
     mt = mt.annotate_cols(sample=sample_ht[mt.s])
+    gt_expr = _matrix_table_gt(mt, hl)
+    mt = mt.annotate_entries(_GT=gt_expr)
     matrix_table_participants = int(mt.count_cols())
     sample_counts["matrix_table_participants"] = matrix_table_participants
+    if matrix_table_participants == 0:
+        return _postprocess_pilot_results(
+            pd.DataFrame(),
+            empty_qc,
+            config,
+            paths,
+            label=label,
+            chromosomes=chromosome_values,
+            analysis_split=analysis_split,
+            eligibility_flag=eligibility_flag,
+            min_maf=min_maf,
+            min_mac=min_mac,
+            min_call_rate=min_call_rate,
+            hwe_p_control=hwe_p_control,
+            sample_counts=sample_counts,
+            wgs_manifest_used=wgs_manifest_used,
+            genotype_source=source,
+            genotype_mt_path=genotype_mt_path,
+            covariates_used=raw_covariates,
+            dropped_covariates=dropped_covariates,
+        )
 
     bases = hl.literal({"A", "C", "G", "T"})
     biallelic_snp = (
@@ -705,13 +795,13 @@ def run_stage4_hail_pilot_gwas(
     mt = mt.filter_rows(biallelic_snp)
 
     outcome = config.analysis.matched_outcome_column
-    mt = mt.annotate_rows(call_stats=hl.agg.call_stats(mt.GT, mt.alleles))
+    mt = mt.annotate_rows(call_stats=hl.agg.call_stats(mt._GT, mt.alleles))
     mt = mt.annotate_rows(
-        n_called=hl.int64(hl.agg.count_where(hl.is_defined(mt.GT))),
+        n_called=hl.int64(hl.agg.count_where(hl.is_defined(mt._GT))),
         n_total=hl.int64(hl.agg.count()),
         hwe_control=hl.agg.filter(
             hl.float64(mt.sample[outcome]) == 0.0,
-            hl.agg.hardy_weinberg_test(mt.GT),
+            hl.agg.hardy_weinberg_test(mt._GT),
         ),
     )
     mt = mt.annotate_rows(
@@ -763,7 +853,7 @@ def run_stage4_hail_pilot_gwas(
     mt = mt.annotate_rows(
         hwe_case=hl.agg.filter(
             hl.float64(mt.sample[outcome]) == 1.0,
-            hl.agg.hardy_weinberg_test(mt.GT),
+            hl.agg.hardy_weinberg_test(mt._GT),
         )
     )
     mt = mt.annotate_rows(
@@ -772,13 +862,13 @@ def run_stage4_hail_pilot_gwas(
 
     print(
         "Running Hail pilot GWAS on "
-        f"chromosomes {', '.join(chromosome_values)} with {matrix_table_participants} MatrixTable samples.",
+        f"{source} chromosomes {', '.join(chromosome_values)} with {matrix_table_participants} MatrixTable samples.",
         flush=True,
     )
     result_ht = hl.logistic_regression_rows(
         test="wald",
         y=hl.float64(mt.sample[outcome]),
-        x=hl.float64(mt.GT.n_alt_alleles()),
+        x=hl.float64(mt._GT.n_alt_alleles()),
         covariates=[1.0, *[hl.float64(mt.sample[column]) for column in hail_covariates]],
         pass_through=[
             mt.variant_id,
@@ -840,6 +930,8 @@ def run_stage4_hail_pilot_gwas(
         hwe_p_control=hwe_p_control,
         sample_counts=sample_counts,
         wgs_manifest_used=wgs_manifest_used,
+        genotype_source=source,
+        genotype_mt_path=genotype_mt_path,
         covariates_used=hail_covariates,
         dropped_covariates=dropped_covariates,
     )
@@ -857,6 +949,7 @@ __all__ = [
     "hail_pilot_manhattan_path",
     "hail_pilot_output_dir",
     "hail_pilot_qc_path",
+    "hail_pilot_default_label",
     "hail_pilot_qq_path",
     "hail_pilot_report_path",
     "hail_pilot_results_path",

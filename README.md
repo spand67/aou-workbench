@@ -73,7 +73,7 @@ aou-workbench match-controls --require-wgs
 aou-workbench characterize-cohort --require-wgs
 ```
 
-The `--require-wgs` commands filter directly in BigQuery with `cb_search_person.has_whole_genome_variant = 1`, then save a WGS-restricted built cohort, matched cohort, CONSORT, Table 1, split summaries, and clinical model input. Hail/ACAF MatrixTable overlap is checked later by the GWAS runner, but the cohort denominator starts from the CDR WGS flag. This is the preferred setup before any GWAS or PRS work. `prepare-wgs-manifest` remains available only as an optional audit/debug command.
+The `--require-wgs` commands filter directly in BigQuery with `cb_search_person.has_whole_genome_variant = 1`, then save a WGS-restricted built cohort, matched cohort, CONSORT, Table 1, split summaries, and clinical model input. Hail/ACAF MatrixTable overlap is checked later by the GWAS runner, but the cohort denominator starts from the CDR WGS flag. This is the preferred setup before ACAF/WGS GWAS or PRS work. For a microarray pilot, run the clinical cohort steps without `--require-wgs` unless you intentionally want the WGS-overlap subset. `prepare-wgs-manifest` remains available only as an optional audit/debug command.
 
 Characterize the inclusive case-control cohort before genomic modeling:
 
@@ -95,6 +95,7 @@ Run the first reduced-marker Hail GWAS pilot:
 
 ```bash
 aou-workbench run-hail-pilot-gwas \
+  --genotype-source acaf \
   --chromosomes 22 \
   --min-maf 0.05 \
   --min-mac 20 \
@@ -105,7 +106,21 @@ aou-workbench run-hail-pilot-gwas \
   --label acaf_chr22_maf05_train_qc
 ```
 
-This uses the AoU ACAF threshold split MatrixTable, not the full variant database. The primary pilot phenotype is broad rhabdomyolysis cases versus matched eligible controls, restricted to the training split and `primary_model_eligible` rows so the test split remains untouched for later PRS/model evaluation. Covariates are `age_at_index`, `is_female`, and PC1-PC5; observation depth, condition-record depth, sepsis, renal injury, and crush injury are not GWAS covariates. The pilot computes variant QC inside the analysis sample and keeps autosomal biallelic SNPs with MAF >= 0.05, minor allele count >= 20, call rate >= 0.98, and control-only Hardy-Weinberg equilibrium p >= 1e-6. Outputs are isolated under `stage4/hail_pilot/<label>/` and include GWAS results, lead hits, QC JSON, sequential variant QC counts, Manhattan and QQ plots, and a markdown report.
+By default this uses the AoU ACAF threshold split MatrixTable, not the full variant database. To run the same chr22 pilot on the v8 microarray Hail MatrixTable instead, use:
+
+```bash
+aou-workbench run-hail-pilot-gwas \
+  --genotype-source microarray \
+  --chromosomes 22 \
+  --min-maf 0.05 \
+  --min-mac 20 \
+  --min-call-rate 0.98 \
+  --hwe-p-control 1e-6 \
+  --analysis-split train \
+  --eligibility-flag primary_model_eligible
+```
+
+The primary pilot phenotype is broad rhabdomyolysis cases versus matched eligible controls, restricted to the training split and `primary_model_eligible` rows so the test split remains untouched for later PRS/model evaluation. ACAF runs also restrict to the WGS manifest; microarray runs instead restrict to participants present in the microarray MatrixTable during the Hail column join. Covariates are `age_at_index`, `is_female`, and PC1-PC5; observation depth, condition-record depth, sepsis, renal injury, and crush injury are not GWAS covariates. The pilot computes variant QC inside the analysis sample and keeps autosomal biallelic SNPs with MAF >= 0.05, minor allele count >= 20, call rate >= 0.98, and control-only Hardy-Weinberg equilibrium p >= 1e-6. Outputs are isolated under `stage4/hail_pilot/<label>/` and include GWAS results, lead hits, QC JSON, sequential variant QC counts, Manhattan and QQ plots, and a markdown report.
 
 If submitting the pilot as a Dataproc job, include requester-pays Spark/Hadoop properties for the AoU controlled bucket:
 

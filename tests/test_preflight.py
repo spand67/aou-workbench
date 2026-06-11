@@ -63,6 +63,7 @@ class PreflightTests(unittest.TestCase):
         self.assertIn("input:clinvar_mt", names)
         self.assertIn("output:stage2", names)
         self.assertIn("input:acaf_mt", names)
+        self.assertIn("input:microarray_mt", names)
         self.assertIn("input:max_unrelated", names)
         self.assertIn("output:stage4", names)
         self.assertNotIn("input:stage1", names)

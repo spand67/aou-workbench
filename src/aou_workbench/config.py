@@ -22,6 +22,7 @@ DEFAULT_CLINVAR_MT_PATH = (
 DEFAULT_ACAF_MT_PATH = (
     f"{DEFAULT_GENOMICS_BUCKET}/v8/wgs/short_read/snpindel/acaf_threshold/splitMT/hail.mt"
 )
+DEFAULT_MICROARRAY_MT_PATH = f"{DEFAULT_GENOMICS_BUCKET}/v8/microarray/hail.mt"
 DEFAULT_COVARIATES = (
     "age_at_index",
     "is_female",
@@ -80,6 +81,7 @@ class WorkbenchConfig:
     exome_mt_path: str = DEFAULT_EXOME_MT_PATH
     clinvar_mt_path: str = DEFAULT_CLINVAR_MT_PATH
     acaf_mt_path: str = DEFAULT_ACAF_MT_PATH
+    microarray_mt_path: str = DEFAULT_MICROARRAY_MT_PATH
     flagged_samples_path: str | None = None
     max_unrelated_path: str | None = None
 
@@ -335,6 +337,7 @@ def _load_workbench(payload: Mapping[str, Any]) -> WorkbenchConfig:
         exome_mt_path=payload.get("exome_mt_path", DEFAULT_EXOME_MT_PATH),
         clinvar_mt_path=payload.get("clinvar_mt_path", DEFAULT_CLINVAR_MT_PATH),
         acaf_mt_path=payload.get("acaf_mt_path", DEFAULT_ACAF_MT_PATH),
+        microarray_mt_path=payload.get("microarray_mt_path", DEFAULT_MICROARRAY_MT_PATH),
         flagged_samples_path=payload.get("flagged_samples_path"),
         max_unrelated_path=payload.get("max_unrelated_path"),
     )

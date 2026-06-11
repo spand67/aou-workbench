@@ -150,6 +150,7 @@ def apply_runtime_defaults(config: ProjectConfig, runtime: RuntimeDefaults | Non
         exome_mt_path=workbench.exome_mt_path,
         clinvar_mt_path=workbench.clinvar_mt_path,
         acaf_mt_path=workbench.acaf_mt_path,
+        microarray_mt_path=workbench.microarray_mt_path,
         flagged_samples_path=workbench.flagged_samples_path,
         max_unrelated_path=workbench.max_unrelated_path,
     )
@@ -414,6 +415,13 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
             _check_local_or_gcs_path(
                 effective.workbench.acaf_mt_path,
                 "input:acaf_mt",
+                effective.workbench.requester_pays_project,
+            )
+        )
+        checks.append(
+            _check_local_or_gcs_path(
+                effective.workbench.microarray_mt_path,
+                "input:microarray_mt",
                 effective.workbench.requester_pays_project,
             )
         )

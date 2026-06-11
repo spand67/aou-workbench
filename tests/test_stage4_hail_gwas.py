@@ -19,7 +19,9 @@ from aou_workbench.stage4_hail_gwas import (
     _hail_sample_frame,
     _normalize_autosomal_chromosomes,
     _normalize_chromosomes,
+    _pilot_restricts_to_wgs_manifest,
     _variant_qc_summary_rows,
+    hail_pilot_default_label,
     hail_pilot_results_path,
 )
 from tests.support import build_demo_project_tree
@@ -34,6 +36,15 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertEqual(_normalize_autosomal_chromosomes(["chr22", "1"]), ["22", "1"])
         with self.assertRaises(ValueError):
             _normalize_autosomal_chromosomes(["22", "X"])
+
+    def test_hail_pilot_genotype_source_defaults(self) -> None:
+        self.assertEqual(hail_pilot_default_label("acaf", ["22"]), "acaf_chr22_maf05_train_qc")
+        self.assertEqual(
+            hail_pilot_default_label("microarray", ["22"], min_maf=0.05),
+            "microarray_chr22_maf05_train_qc",
+        )
+        self.assertTrue(_pilot_restricts_to_wgs_manifest("acaf"))
+        self.assertFalse(_pilot_restricts_to_wgs_manifest("microarray"))
 
     def test_hail_sample_frame_builds_complete_case_numeric_covariates(self) -> None:
         paths = build_demo_project_tree()
@@ -122,6 +133,47 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertLess(counts["after_complete_case_participants"], counts["matched_input_participants"])
         self.assertGreater(counts["after_complete_case_cases"], 0)
         self.assertGreater(counts["after_complete_case_controls"], 0)
+
+    def test_hail_pilot_sample_frame_can_skip_wgs_manifest_for_microarray(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        cohort_df = build_rhabdo_cohort(config)
+        matched_df = match_case_controls(cohort_df, config).copy()
+        matched_df["analysis_split"] = "train"
+        matched_df["primary_model_eligible"] = 1
+        pd.DataFrame({"person_id": [str(matched_df["person_id"].iloc[0])] }).to_csv(
+            stage1_sample_manifest_path(paths["stage1_table"]),
+            sep="\t",
+            index=False,
+        )
+
+        _, _, _, _, restricted_counts, restricted_manifest_used = _hail_pilot_sample_frame(
+            matched_df,
+            config,
+            restrict_to_wgs_manifest=True,
+        )
+        _, _, _, _, unrestricted_counts, unrestricted_manifest_used = _hail_pilot_sample_frame(
+            matched_df,
+            config,
+            restrict_to_wgs_manifest=False,
+        )
+
+        self.assertTrue(restricted_manifest_used)
+        self.assertFalse(unrestricted_manifest_used)
+        self.assertLess(
+            restricted_counts["after_wgs_manifest_participants"],
+            unrestricted_counts["after_wgs_manifest_participants"],
+        )
+        self.assertEqual(
+            unrestricted_counts["after_wgs_manifest_participants"],
+            unrestricted_counts["after_case_control_definition_participants"],
+        )
 
     def test_hail_pilot_loader_refreshes_stale_clinical_model_input(self) -> None:
         paths = build_demo_project_tree()
@@ -218,6 +270,11 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertEqual(args.hwe_p_control, 1e-6)
         self.assertEqual(args.analysis_split, "train")
         self.assertEqual(args.eligibility_flag, "primary_model_eligible")
+        self.assertEqual(args.genotype_source, "acaf")
+        self.assertIsNone(args.label)
+
+        microarray_args = parser.parse_args(["run-hail-pilot-gwas", "--genotype-source", "microarray"])
+        self.assertEqual(microarray_args.genotype_source, "microarray")
 
 
 if __name__ == "__main__":
