@@ -59,6 +59,19 @@ from .microarray_plink_gwas import (
     microarray_plink_variant_qc_summary_path,
     run_microarray_plink_gwas,
 )
+from .microarray_plink_prs import (
+    DEFAULT_PRS_THRESHOLDS,
+    microarray_prs_case_status_svg_path,
+    microarray_prs_default_label,
+    microarray_prs_metrics_path,
+    microarray_prs_qc_path,
+    microarray_prs_range_path,
+    microarray_prs_report_path,
+    microarray_prs_scores_path,
+    microarray_prs_weights_path,
+    parse_thresholds,
+    run_microarray_plink_prs,
+)
 from .paths import build_output_paths, project_path
 from .pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
 from .preindex_profile import (
@@ -412,6 +425,53 @@ def _build_parser() -> argparse.ArgumentParser:
         help="PLINK2 executable. Default: plink2.",
     )
 
+    microarray_prs_parser = subparsers.add_parser(
+        "run-microarray-plink-prs",
+        help="Build LD-clumped threshold-grid PRS scores from a microarray PLINK GWAS and score the held-out split.",
+    )
+    _add_config_arguments(microarray_prs_parser)
+    microarray_prs_parser.add_argument(
+        "--gwas-label",
+        required=True,
+        help="Microarray PLINK GWAS label to use as the PRS weight source.",
+    )
+    microarray_prs_parser.add_argument(
+        "--plink-prefix",
+        default=None,
+        help="Local PLINK prefix for arrays.bed/bim/fam. Default: ~/plink_microarray/arrays.",
+    )
+    microarray_prs_parser.add_argument(
+        "--plink2-bin",
+        default="plink2",
+        help="PLINK2 executable. Default: plink2.",
+    )
+    microarray_prs_parser.add_argument(
+        "--score-split",
+        default="test",
+        help="Matched cohort analysis_split to score. Default: test.",
+    )
+    microarray_prs_parser.add_argument(
+        "--eligibility-flag",
+        default="primary_model_eligible",
+        help="Eligibility flag in clinical_model_input.tsv. Default: primary_model_eligible.",
+    )
+    microarray_prs_parser.add_argument("--clump-r2", type=float, default=0.1, help="PLINK clump r2 threshold. Default: 0.1.")
+    microarray_prs_parser.add_argument("--clump-kb", type=int, default=250, help="PLINK clump window in kb. Default: 250.")
+    microarray_prs_parser.add_argument("--clump-p1", type=float, default=1.0, help="PLINK clump index p threshold. Default: 1.0.")
+    microarray_prs_parser.add_argument("--clump-p2", type=float, default=1.0, help="PLINK clump secondary p threshold. Default: 1.0.")
+    microarray_prs_parser.add_argument(
+        "--thresholds",
+        default=",".join(f"{value:g}" for value in DEFAULT_PRS_THRESHOLDS),
+        help="Comma-separated PRS p-value thresholds.",
+    )
+    microarray_prs_parser.add_argument(
+        "--label",
+        default=None,
+        help="Output label under stage4/microarray_plink/<gwas-label>/prs/. Default: <score-split>_clumped_threshold_grid.",
+    )
+    microarray_prs_parser.add_argument("--threads", type=int, default=None, help="Optional PLINK2 thread count.")
+    microarray_prs_parser.add_argument("--memory-mb", type=int, default=None, help="Optional PLINK2 memory limit in MiB.")
+
     for name in ("run-stage1", "run-stage2", "run-stage3", "run-stage4", "run-all"):
         stage_parser = subparsers.add_parser(name, help=f"Execute {name}.")
         _add_config_arguments(stage_parser)
@@ -641,6 +701,41 @@ def main(argv: list[str] | None = None) -> int:
         print(f"report: {microarray_plink_report_path(paths, label)}")
         print(f"manhattan: {microarray_plink_manhattan_path(paths, label)}")
         print(f"qq: {microarray_plink_qq_path(paths, label)}")
+        return 0
+
+    if args.command == "run-microarray-plink-prs":
+        effective, paths, matched_df = _load_hail_pilot_matched_input(
+            config,
+            eligibility_flag=args.eligibility_flag,
+        )
+        label = args.label or microarray_prs_default_label(args.score_split)
+        outputs = run_microarray_plink_prs(
+            effective,
+            matched_df,
+            paths,
+            gwas_label=args.gwas_label,
+            plink_prefix=args.plink_prefix,
+            plink2_bin=args.plink2_bin,
+            score_split=args.score_split,
+            eligibility_flag=args.eligibility_flag,
+            clump_r2=args.clump_r2,
+            clump_kb=args.clump_kb,
+            clump_p1=args.clump_p1,
+            clump_p2=args.clump_p2,
+            thresholds=parse_thresholds(args.thresholds),
+            label=label,
+            threads=args.threads,
+            memory_mb=args.memory_mb,
+        )
+        metrics = outputs["metrics"]
+        print(f"Microarray PLINK PRS thresholds evaluated: {metrics.shape[0]}")
+        print(f"weights: {microarray_prs_weights_path(paths, args.gwas_label, label)}")
+        print(f"ranges: {microarray_prs_range_path(paths, args.gwas_label, label)}")
+        print(f"scores: {microarray_prs_scores_path(paths, args.gwas_label, label)}")
+        print(f"metrics: {microarray_prs_metrics_path(paths, args.gwas_label, label)}")
+        print(f"qc: {microarray_prs_qc_path(paths, args.gwas_label, label)}")
+        print(f"report: {microarray_prs_report_path(paths, args.gwas_label, label)}")
+        print(f"case_status_plot: {microarray_prs_case_status_svg_path(paths, args.gwas_label, label)}")
         return 0
 
     if args.command == "run-all":

@@ -141,6 +141,25 @@ aou-workbench run-microarray-plink-gwas \
 
 This command reuses the same train-only broad-rhabdomyolysis case versus matched-control phenotype and covariates as the Hail pilot, but runs PLINK2 on the local microarray array files. `--copy-plink-to` explicitly copies the large `arrays.bed`, `arrays.bim`, and `arrays.fam` files once; later runs can reuse them with `--plink-prefix "$HOME/plink_microarray/arrays"`. Outputs are isolated under `stage4/microarray_plink/<label>/`.
 
+After a full autosomal microarray GWAS, build exploratory LD-clumped PRS scores in the held-out test split:
+
+```bash
+aou-workbench run-microarray-plink-prs \
+  --gwas-label microarray_plink_autosomes_maf05_train_qc \
+  --plink-prefix "$HOME/plink_microarray/arrays" \
+  --plink2-bin "$HOME/.conda/envs/plink2/bin/plink2" \
+  --score-split test \
+  --clump-r2 0.1 \
+  --clump-kb 250 \
+  --clump-p1 1.0 \
+  --clump-p2 1.0 \
+  --thresholds 5e-8,1e-6,1e-5,1e-4,1e-3,0.01,0.05,0.1,0.2,0.5,1.0 \
+  --threads "$(nproc)" \
+  --label test_clumped_threshold_grid
+```
+
+This scores the held-out `test` split only, using training-GWAS effect sizes from the selected microarray GWAS label. Outputs are written under `stage4/microarray_plink/<gwas-label>/prs/<label>/` and include clumped weights, p-value ranges, `.sscore` files, combined PRS scores, PRS-only metrics, a case/control score plot, QC JSON, and a report. Threshold comparisons are exploratory; do not select a threshold on the held-out test set for later model tuning.
+
 If submitting the pilot as a Dataproc job, include requester-pays Spark/Hadoop properties for the AoU controlled bucket:
 
 ```bash
