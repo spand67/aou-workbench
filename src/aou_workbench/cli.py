@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -106,7 +107,7 @@ def _load_config(args: argparse.Namespace):
 def _load_or_build_matched_artifacts(config, *, require_wgs: bool = False):
     effective = apply_runtime_defaults(config)
     paths = build_output_paths(effective)
-    if os.path.exists(paths.matched_cohort_tsv) and not require_wgs:
+    if os.path.exists(paths.matched_cohort_tsv) and _outputs_satisfy_wgs_requirement(paths, require_wgs=require_wgs):
         matched_df = read_table(paths.matched_cohort_tsv)
         matched_df = apply_time_anchored_clinical_cofactors(effective, matched_df)
         return effective, paths, matched_df
@@ -116,10 +117,29 @@ def _load_or_build_matched_artifacts(config, *, require_wgs: bool = False):
 def _load_or_build_cohort_artifacts(config, *, require_wgs: bool = False):
     effective = apply_runtime_defaults(config)
     paths = build_output_paths(effective)
-    if os.path.exists(paths.built_cohort_tsv) and not require_wgs:
+    if os.path.exists(paths.built_cohort_tsv) and _outputs_satisfy_wgs_requirement(paths, require_wgs=require_wgs):
         cohort_df = read_table(paths.built_cohort_tsv)
         return effective, paths, cohort_df
     return build_cohort_artifacts(config, require_wgs=require_wgs)
+
+
+def _manifest_requires_wgs(paths) -> bool:
+    try:
+        with open(paths.manifest_json, "r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return False
+    return bool(manifest.get("require_wgs"))
+
+
+def _outputs_satisfy_wgs_requirement(paths, *, require_wgs: bool) -> bool:
+    return not require_wgs or _manifest_requires_wgs(paths)
+
+
+def _clinical_model_input_needs_refresh(paths, *, require_wgs: bool) -> bool:
+    if not os.path.exists(clinical_model_input_path(paths)):
+        return True
+    return require_wgs and not _manifest_requires_wgs(paths)
 
 
 def _hail_pilot_required_input_columns(config, eligibility_flag: str) -> set[str]:
@@ -563,7 +583,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run-clinical-model":
         effective, paths, cohort_df = _load_or_build_cohort_artifacts(config, require_wgs=args.require_wgs)
-        if args.require_wgs or not os.path.exists(clinical_model_input_path(paths)):
+        if _clinical_model_input_needs_refresh(paths, require_wgs=args.require_wgs):
             _, _, matched_df = _load_or_build_matched_artifacts(config, require_wgs=args.require_wgs)
             characterize_case_control_cohort(effective, cohort_df, matched_df, paths)
         outputs = run_clinical_model(

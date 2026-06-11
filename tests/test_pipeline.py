@@ -6,7 +6,9 @@ from unittest import mock
 
 import pandas as pd
 
+from aou_workbench import cli
 from aou_workbench.config import load_project_config
+from aou_workbench.cohort_summary import clinical_model_input_path
 from dataclasses import replace
 
 from aou_workbench.pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
@@ -61,6 +63,46 @@ class PipelineIntegrationTests(unittest.TestCase):
 
         allowed = {str(person_id) for person_id in range(1, 11)}
         self.assertTrue(set(matched_df["person_id"].astype(str)).issubset(allowed))
+
+    def test_cli_reuses_existing_wgs_artifacts_when_required(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        effective, output_paths, cohort_df = build_cohort_artifacts(config, require_wgs=True)
+        _, _, matched_df = match_controls_artifacts(effective, cohort_df, require_wgs=True)
+
+        with (
+            mock.patch("aou_workbench.cli.build_cohort_artifacts") as mock_build,
+            mock.patch("aou_workbench.cli.match_controls_artifacts") as mock_match,
+        ):
+            _, _, loaded_cohort = cli._load_or_build_cohort_artifacts(config, require_wgs=True)
+            _, _, loaded_matched = cli._load_or_build_matched_artifacts(config, require_wgs=True)
+
+        mock_build.assert_not_called()
+        mock_match.assert_not_called()
+        self.assertEqual(len(loaded_cohort), len(cohort_df))
+        self.assertEqual(len(loaded_matched), len(matched_df))
+
+    def test_clinical_model_input_refresh_uses_wgs_manifest_state(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        _, output_paths, cohort_df = build_cohort_artifacts(config, require_wgs=True)
+        model_input_path = clinical_model_input_path(output_paths)
+        Path(model_input_path).parent.mkdir(parents=True, exist_ok=True)
+        cohort_df.head(1).to_csv(model_input_path, sep="\t", index=False)
+
+        self.assertFalse(cli._clinical_model_input_needs_refresh(output_paths, require_wgs=True))
 
     def test_run_all_writes_expected_outputs(self) -> None:
         paths = build_demo_project_tree()
