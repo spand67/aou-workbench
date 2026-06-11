@@ -776,8 +776,6 @@ def run_stage4_hail_pilot_gwas(
             dropped_covariates=dropped_covariates,
         )
 
-    gt_expr = _matrix_table_gt(mt, hl)
-    mt = mt.select_entries(_GT=gt_expr)
     bases = hl.literal({"A", "C", "G", "T"})
     biallelic_snp = (
         (hl.len(mt.alleles) == 2)
@@ -796,6 +794,8 @@ def run_stage4_hail_pilot_gwas(
     initial_rows = int(row_counts.initial)
     biallelic_rows = int(row_counts.biallelic)
     mt = mt.filter_rows(biallelic_snp)
+    gt_expr = _matrix_table_gt(mt, hl)
+    mt = mt.select_entries(_GT=gt_expr)
 
     outcome = config.analysis.matched_outcome_column
     mt = mt.annotate_rows(call_stats=hl.agg.call_stats(mt._GT, mt.alleles))
