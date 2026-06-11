@@ -45,12 +45,14 @@ class ClinicalModelTests(unittest.TestCase):
         self.assertTrue(Path(clinical_model_report_path(output_paths)).exists())
 
         feature_text = "\n".join(coefficients["feature"].astype(str).tolist())
+        report_text = Path(clinical_model_report_path(output_paths)).read_text()
         self.assertNotIn("sepsis", feature_text)
         self.assertNotIn("renal", feature_text)
         self.assertNotIn("remote_preindex", feature_text)
         self.assertNotIn("near_preindex", feature_text)
         self.assertNotIn("periindex", feature_text)
         self.assertNotIn("postindex", feature_text)
+        self.assertIn("Primary predictors: age, observation depth, condition-record depth, sex category, ancestry category", report_text)
 
 
 if __name__ == "__main__":
