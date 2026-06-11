@@ -122,6 +122,57 @@ def _load_or_build_cohort_artifacts(config, *, require_wgs: bool = False):
     return build_cohort_artifacts(config, require_wgs=require_wgs)
 
 
+def _hail_pilot_required_input_columns(config, eligibility_flag: str) -> set[str]:
+    return {
+        "person_id",
+        config.analysis.matched_outcome_column,
+        "analysis_split",
+        eligibility_flag,
+        "match_group_id",
+        "case_tier",
+        "eligible_control",
+        "eligible_ehr_denominator",
+        "broad_rhabdo_case",
+        "definite_rhabdo_case",
+        "high_ck_without_rhabdo",
+    }
+
+
+def _missing_columns(frame, required: set[str]) -> list[str]:
+    return sorted(required.difference(frame.columns))
+
+
+def _load_hail_pilot_matched_input(config, *, eligibility_flag: str):
+    effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
+    input_path = clinical_model_input_path(paths)
+    required = _hail_pilot_required_input_columns(effective, eligibility_flag)
+
+    needs_refresh = True
+    missing = sorted(required)
+    matched_df = None
+    if os.path.exists(input_path):
+        matched_df = read_table(input_path)
+        missing = _missing_columns(matched_df, required)
+        needs_refresh = bool(missing)
+
+    if needs_refresh:
+        missing_text = ", ".join(missing) if missing else "file missing"
+        print(f"Refreshing clinical model input for Hail pilot; missing columns: {missing_text}", flush=True)
+        _, _, matched_cohort = _load_or_build_matched_artifacts(effective)
+        characterize_case_control_cohort(effective, cohort_df, matched_cohort, paths)
+        matched_df = read_table(input_path)
+        missing = _missing_columns(matched_df, required)
+        if missing:
+            raise RuntimeError(
+                "Existing cohort or matched-cohort outputs are too stale for the Hail pilot. "
+                "Still missing required columns after refreshing clinical_model_input.tsv: "
+                + ", ".join(missing)
+                + ". Rebuild the WGS cohort, rerun matching, and rerun characterization before GWAS."
+            )
+
+    return effective, paths, matched_df
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AoU workbench CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -397,11 +448,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run-hail-pilot-gwas":
-        effective, paths, cohort_df = _load_or_build_cohort_artifacts(config)
-        if not os.path.exists(clinical_model_input_path(paths)):
-            _, _, matched_df = _load_or_build_matched_artifacts(config)
-            characterize_case_control_cohort(effective, cohort_df, matched_df, paths)
-        matched_df = read_table(clinical_model_input_path(paths))
+        effective, paths, matched_df = _load_hail_pilot_matched_input(
+            config,
+            eligibility_flag=args.eligibility_flag,
+        )
         chromosomes = [value.strip() for value in args.chromosomes.split(",") if value.strip()]
         full, hits = run_stage4_hail_pilot_gwas(
             effective,

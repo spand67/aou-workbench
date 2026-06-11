@@ -112,6 +112,14 @@ class CohortSummaryTests(unittest.TestCase):
         self.assertIn("age_at_index", set(outputs["missingness"]["variable"]))
         self.assertIn("analysis_split", outputs["clinical_model_input"].columns)
         self.assertIn("primary_model_eligible", outputs["clinical_model_input"].columns)
+        for column in (
+            "eligible_control",
+            "eligible_ehr_denominator",
+            "broad_rhabdo_case",
+            "definite_rhabdo_case",
+            "high_ck_without_rhabdo",
+        ):
+            self.assertIn(column, outputs["clinical_model_input"].columns)
 
     def test_case_cofactor_prior_timing_bins_nearest_prior_events(self) -> None:
         paths = build_demo_project_tree()

@@ -1173,6 +1173,8 @@ def _missingness_variables(frame: pd.DataFrame) -> list[str]:
         "sensitivity_no_periindex_sepsis_eligible",
         "sensitivity_include_trauma_eligible",
         "clinical_model_complete_core",
+        "eligible_control",
+        "eligible_ehr_denominator",
         "matched_case_preperi_crush_injury",
         "row_preperi_crush_injury",
         "matched_case_preindex_sepsis",
@@ -1259,6 +1261,22 @@ def build_clinical_model_input(config: ProjectConfig, split_df: pd.DataFrame) ->
     output = split_df.copy()
     if "primary_model_eligible" not in output.columns:
         output = add_model_eligibility_flags(config, output)
+    outcome = pd.to_numeric(
+        output.get(config.analysis.matched_outcome_column, pd.Series(np.nan, index=output.index)),
+        errors="coerce",
+    )
+    tier = output.get("case_tier", pd.Series("", index=output.index)).astype("string").str.lower()
+    if "eligible_control" not in output.columns:
+        output["eligible_control"] = (outcome.eq(0) & tier.eq("control")).astype(int)
+    if "eligible_ehr_denominator" not in output.columns:
+        condition_dates = pd.to_numeric(output.get("omop_condition_record_dates", 0), errors="coerce").fillna(0)
+        output["eligible_ehr_denominator"] = condition_dates.ge(2).astype(int)
+    if "broad_rhabdo_case" not in output.columns:
+        output["broad_rhabdo_case"] = (outcome.eq(1) & tier.isin({"broad", "definite"})).astype(int)
+    if "definite_rhabdo_case" not in output.columns:
+        output["definite_rhabdo_case"] = (outcome.eq(1) & tier.eq("definite")).astype(int)
+    if "high_ck_without_rhabdo" not in output.columns:
+        output["high_ck_without_rhabdo"] = tier.eq("indeterminate_ck_only").astype(int)
     if _has_sex_information(output):
         output["model_sex_category"] = _sex_category_series(output)
     if "ancestry_pred" in output.columns:
@@ -1273,6 +1291,8 @@ def build_clinical_model_input(config: ProjectConfig, split_df: pd.DataFrame) ->
         "sensitivity_no_periindex_sepsis_eligible",
         "sensitivity_include_trauma_eligible",
         "clinical_model_complete_core",
+        "eligible_control",
+        "eligible_ehr_denominator",
         "matched_case_preperi_crush_injury",
         "row_preperi_crush_injury",
         "matched_case_preindex_sepsis",
@@ -1283,6 +1303,9 @@ def build_clinical_model_input(config: ProjectConfig, split_df: pd.DataFrame) ->
         "match_role",
         "matched_case_person_id",
         "case_tier",
+        "broad_rhabdo_case",
+        "definite_rhabdo_case",
+        "high_ck_without_rhabdo",
         "index_date",
         "age_at_index",
         "observation_days",

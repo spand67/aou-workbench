@@ -1,21 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 import unittest
 
 import pandas as pd
 
-from aou_workbench.cli import _build_parser
+from aou_workbench.cli import _build_parser, _load_hail_pilot_matched_input
 from aou_workbench.cohort import build_rhabdo_cohort
+from aou_workbench.cohort_summary import characterize_case_control_cohort, clinical_model_input_path
 from aou_workbench.config import load_project_config
 from aou_workbench.matching import match_case_controls
 from aou_workbench.paths import build_output_paths
+from aou_workbench.pipeline import build_cohort_artifacts, match_controls_artifacts
 from aou_workbench.stage1_prepare import stage1_sample_manifest_path
 from aou_workbench.stage4_hail_gwas import (
     _hail_pilot_sample_frame,
     _hail_sample_frame,
     _normalize_autosomal_chromosomes,
     _normalize_chromosomes,
+    _variant_qc_summary_rows,
     hail_pilot_results_path,
 )
 from tests.support import build_demo_project_tree
@@ -118,6 +122,74 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertLess(counts["after_complete_case_participants"], counts["matched_input_participants"])
         self.assertGreater(counts["after_complete_case_cases"], 0)
         self.assertGreater(counts["after_complete_case_controls"], 0)
+
+    def test_hail_pilot_loader_refreshes_stale_clinical_model_input(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        effective, output_paths, cohort_df = build_cohort_artifacts(config)
+        _, _, matched_df = match_controls_artifacts(effective, cohort_df)
+        characterize_case_control_cohort(effective, cohort_df, matched_df, output_paths)
+
+        input_path = Path(clinical_model_input_path(output_paths))
+        stale = pd.read_csv(input_path, sep="\t").drop(
+            columns=[
+                "eligible_control",
+                "eligible_ehr_denominator",
+                "broad_rhabdo_case",
+                "definite_rhabdo_case",
+                "high_ck_without_rhabdo",
+            ],
+            errors="ignore",
+        )
+        stale.to_csv(input_path, sep="\t", index=False)
+
+        _, _, refreshed = _load_hail_pilot_matched_input(config, eligibility_flag="primary_model_eligible")
+
+        for column in (
+            "eligible_control",
+            "eligible_ehr_denominator",
+            "broad_rhabdo_case",
+            "definite_rhabdo_case",
+            "high_ck_without_rhabdo",
+        ):
+            self.assertIn(column, refreshed.columns)
+
+    def test_variant_qc_summary_rows_preserve_sequential_counts(self) -> None:
+        rows = _variant_qc_summary_rows(
+            chromosomes=["22"],
+            initial_rows=100,
+            biallelic_rows=90,
+            maf_rows=80,
+            mac_rows=75,
+            call_rate_rows=70,
+            hwe_rows=60,
+            min_maf=0.05,
+            min_mac=20,
+            min_call_rate=0.98,
+            hwe_p_control=1e-6,
+        )
+        summary = pd.DataFrame(rows)
+
+        self.assertEqual(
+            summary["filter"].tolist(),
+            [
+                "interval_and_sample_restriction",
+                "autosomal_biallelic_snp",
+                "maf",
+                "minor_allele_count",
+                "call_rate",
+                "control_hwe_p",
+            ],
+        )
+        self.assertEqual(summary["rows_before"].tolist(), [100, 100, 90, 80, 75, 70])
+        self.assertEqual(summary["rows_after"].tolist(), [100, 90, 80, 75, 70, 60])
+        self.assertEqual(summary["rows_removed"].tolist(), [0, 10, 10, 5, 5, 10])
 
     def test_hail_pilot_paths_are_labeled_and_do_not_overwrite_stage4(self) -> None:
         paths = build_demo_project_tree()

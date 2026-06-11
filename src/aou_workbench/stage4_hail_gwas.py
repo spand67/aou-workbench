@@ -19,6 +19,7 @@ from .svg import write_manhattan_svg, write_qq_svg
 
 
 PILOT_COVARIATES = ("age_at_index", "is_female", "pc1", "pc2", "pc3", "pc4", "pc5")
+PILOT_CASE_CONTROL_REQUIRED_COLUMNS = ("match_group_id", "case_tier", "eligible_control")
 
 
 def hail_stage4_full_results_path(paths: ProjectPaths) -> str:
@@ -147,13 +148,13 @@ def _flag_mask(frame: pd.DataFrame, column: str) -> pd.Series:
 
 
 def _pilot_case_control_definition_mask(sample: pd.DataFrame, outcome_column: str) -> pd.Series:
-    required = {"match_group_id", "case_tier", "eligible_control"}
+    required = set(PILOT_CASE_CONTROL_REQUIRED_COLUMNS)
     missing = sorted(required.difference(sample.columns))
     if missing:
         raise RuntimeError(
-            "Matched cohort is missing required Hail pilot case-control columns: "
+            "GWAS pilot input is missing required case-control columns: "
             + ", ".join(missing)
-            + ". Run `aou-workbench match-controls` and `aou-workbench characterize-cohort` first."
+            + ". Existing outputs are stale; rerun `aou-workbench characterize-cohort`, or rebuild cohort/matching if this persists."
         )
 
     outcome = pd.to_numeric(sample[outcome_column], errors="coerce")
@@ -167,6 +168,42 @@ def _pilot_case_control_definition_mask(sample: pd.DataFrame, outcome_column: st
     case_mask = outcome.eq(1) & broad_case
     control_mask = outcome.eq(0) & tier.eq("control") & _flag_mask(sample, "eligible_control")
     return case_mask | control_mask
+
+
+def _qc_row(name: str, threshold: str, before: int, after: int) -> dict[str, object]:
+    before_int = int(before)
+    after_int = int(after)
+    return {
+        "filter": name,
+        "threshold": threshold,
+        "rows_before": before_int,
+        "rows_after": after_int,
+        "rows_removed": before_int - after_int,
+    }
+
+
+def _variant_qc_summary_rows(
+    *,
+    chromosomes: list[str],
+    initial_rows: int,
+    biallelic_rows: int,
+    maf_rows: int,
+    mac_rows: int,
+    call_rate_rows: int,
+    hwe_rows: int,
+    min_maf: float,
+    min_mac: int,
+    min_call_rate: float,
+    hwe_p_control: float,
+) -> list[dict[str, object]]:
+    return [
+        _qc_row("interval_and_sample_restriction", ",".join(chromosomes), initial_rows, initial_rows),
+        _qc_row("autosomal_biallelic_snp", "biallelic A/C/G/T SNP", initial_rows, biallelic_rows),
+        _qc_row("maf", f">= {min_maf}", biallelic_rows, maf_rows),
+        _qc_row("minor_allele_count", f">= {int(min_mac)}", maf_rows, mac_rows),
+        _qc_row("call_rate", f">= {min_call_rate}", mac_rows, call_rate_rows),
+        _qc_row("control_hwe_p", f">= {hwe_p_control}", call_rate_rows, hwe_rows),
+    ]
 
 
 def _hail_sample_frame(
@@ -649,45 +686,23 @@ def run_stage4_hail_pilot_gwas(
     matrix_table_participants = int(mt.count_cols())
     sample_counts["matrix_table_participants"] = matrix_table_participants
 
-    qc_rows: list[dict[str, object]] = []
-
-    def apply_row_filter(current_mt, name: str, threshold: str, predicate):
-        before = int(current_mt.count_rows())
-        filtered = current_mt.filter_rows(predicate)
-        after = int(filtered.count_rows())
-        qc_rows.append(
-            {
-                "filter": name,
-                "threshold": threshold,
-                "rows_before": before,
-                "rows_after": after,
-                "rows_removed": before - after,
-            }
-        )
-        return filtered
-
-    initial_rows = int(mt.count_rows())
-    qc_rows.append(
-        {
-            "filter": "interval_and_sample_restriction",
-            "threshold": ",".join(chromosome_values),
-            "rows_before": initial_rows,
-            "rows_after": initial_rows,
-            "rows_removed": 0,
-        }
-    )
-
     bases = hl.literal({"A", "C", "G", "T"})
-    mt = apply_row_filter(
-        mt,
-        "autosomal_biallelic_snp",
-        "biallelic A/C/G/T SNP",
+    biallelic_snp = (
         (hl.len(mt.alleles) == 2)
         & (hl.len(mt.alleles[0]) == 1)
         & (hl.len(mt.alleles[1]) == 1)
         & bases.contains(mt.alleles[0])
-        & bases.contains(mt.alleles[1]),
+        & bases.contains(mt.alleles[1])
     )
+    row_counts = mt.aggregate_rows(
+        hl.struct(
+            initial=hl.agg.count(),
+            biallelic=hl.agg.count_where(biallelic_snp),
+        )
+    )
+    initial_rows = int(row_counts.initial)
+    biallelic_rows = int(row_counts.biallelic)
+    mt = mt.filter_rows(biallelic_snp)
 
     outcome = config.analysis.matched_outcome_column
     mt = mt.annotate_rows(call_stats=hl.agg.call_stats(mt.GT, mt.alleles))
@@ -696,10 +711,6 @@ def run_stage4_hail_pilot_gwas(
         n_total=hl.int64(hl.agg.count()),
         hwe_control=hl.agg.filter(
             hl.float64(mt.sample[outcome]) == 0.0,
-            hl.agg.hardy_weinberg_test(mt.GT),
-        ),
-        hwe_case=hl.agg.filter(
-            hl.float64(mt.sample[outcome]) == 1.0,
             hl.agg.hardy_weinberg_test(mt.GT),
         ),
     )
@@ -712,7 +723,6 @@ def run_stage4_hail_pilot_gwas(
         maf=hl.float64(hl.min(mt.call_stats.AF[1], 1.0 - mt.call_stats.AF[1])),
         call_rate=hl.float64(mt.n_called) / hl.float64(mt.n_total),
         hwe_control_p=mt.hwe_control.p_value,
-        hwe_case_p=mt.hwe_case.p_value,
         variant_id=(
             hl.str(mt.locus.contig).replace("chr", "")
             + ":"
@@ -724,29 +734,40 @@ def run_stage4_hail_pilot_gwas(
         ),
     )
 
-    mt = apply_row_filter(
-        mt,
-        "maf",
-        f">= {min_maf}",
-        hl.is_defined(mt.maf) & (mt.maf >= float(min_maf)),
+    maf_filter = hl.is_defined(mt.maf) & (mt.maf >= float(min_maf))
+    mac_filter = maf_filter & hl.is_defined(mt.minor_allele_count) & (mt.minor_allele_count >= int(min_mac))
+    call_rate_filter = mac_filter & hl.is_defined(mt.call_rate) & (mt.call_rate >= float(min_call_rate))
+    final_qc_filter = call_rate_filter & hl.is_defined(mt.hwe_control_p) & (mt.hwe_control_p >= float(hwe_p_control))
+    qc_counts = mt.aggregate_rows(
+        hl.struct(
+            maf=hl.agg.count_where(maf_filter),
+            mac=hl.agg.count_where(mac_filter),
+            call_rate=hl.agg.count_where(call_rate_filter),
+            hwe=hl.agg.count_where(final_qc_filter),
+        )
     )
-    mt = apply_row_filter(
-        mt,
-        "minor_allele_count",
-        f">= {int(min_mac)}",
-        hl.is_defined(mt.minor_allele_count) & (mt.minor_allele_count >= int(min_mac)),
+    qc_rows = _variant_qc_summary_rows(
+        chromosomes=chromosome_values,
+        initial_rows=initial_rows,
+        biallelic_rows=biallelic_rows,
+        maf_rows=int(qc_counts.maf),
+        mac_rows=int(qc_counts.mac),
+        call_rate_rows=int(qc_counts.call_rate),
+        hwe_rows=int(qc_counts.hwe),
+        min_maf=min_maf,
+        min_mac=min_mac,
+        min_call_rate=min_call_rate,
+        hwe_p_control=hwe_p_control,
     )
-    mt = apply_row_filter(
-        mt,
-        "call_rate",
-        f">= {min_call_rate}",
-        hl.is_defined(mt.call_rate) & (mt.call_rate >= float(min_call_rate)),
+    mt = mt.filter_rows(final_qc_filter)
+    mt = mt.annotate_rows(
+        hwe_case=hl.agg.filter(
+            hl.float64(mt.sample[outcome]) == 1.0,
+            hl.agg.hardy_weinberg_test(mt.GT),
+        )
     )
-    mt = apply_row_filter(
-        mt,
-        "control_hwe_p",
-        f">= {hwe_p_control}",
-        hl.is_defined(mt.hwe_control_p) & (mt.hwe_control_p >= float(hwe_p_control)),
+    mt = mt.annotate_rows(
+        hwe_case_p=mt.hwe_case.p_value,
     )
 
     print(
