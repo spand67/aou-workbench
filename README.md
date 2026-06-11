@@ -107,6 +107,12 @@ aou-workbench run-hail-pilot-gwas \
 
 This uses the AoU ACAF threshold split MatrixTable, not the full variant database. The primary pilot phenotype is broad rhabdomyolysis cases versus matched eligible controls, restricted to the training split and `primary_model_eligible` rows so the test split remains untouched for later PRS/model evaluation. Covariates are `age_at_index`, `is_female`, and PC1-PC5; observation depth, condition-record depth, sepsis, renal injury, and crush injury are not GWAS covariates. The pilot computes variant QC inside the analysis sample and keeps autosomal biallelic SNPs with MAF >= 0.05, minor allele count >= 20, call rate >= 0.98, and control-only Hardy-Weinberg equilibrium p >= 1e-6. Outputs are isolated under `stage4/hail_pilot/<label>/` and include GWAS results, lead hits, QC JSON, sequential variant QC counts, Manhattan and QQ plots, and a markdown report.
 
+If submitting the pilot as a Dataproc job, include requester-pays Spark/Hadoop properties for the AoU controlled bucket:
+
+```bash
+--properties="spark.serializer=org.apache.spark.serializer.KryoSerializer,spark.kryo.registrator=is.hail.kryo.HailKryoRegistrator,spark.hadoop.fs.gs.requester.pays.project.id=$PROJECT,spark.hadoop.fs.gs.requester.pays.mode=CUSTOM,spark.hadoop.fs.gs.requester.pays.buckets=vwb-aou-datasets-controlled"
+```
+
 Rebuild the cross-analysis dashboard and Markdown digest from existing outputs without rerunning queries or models:
 
 ```bash
