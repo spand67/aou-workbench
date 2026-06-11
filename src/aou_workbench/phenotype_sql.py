@@ -163,12 +163,21 @@ FULL OUTER JOIN (
 """.strip()
 
 
-def render_baseline_sql(config: ProjectConfig) -> str:
+def render_baseline_sql(config: ProjectConfig, *, require_wgs: bool = False) -> str:
     cdr = config.workbench.workspace_cdr or "{{workspace_cdr}}"
     person_table = _qualify_table(cdr, config.phenotype.tables.person_table)
     observation_table = _qualify_table(cdr, config.phenotype.tables.observation_table)
     condition_table = _qualify_table(cdr, config.phenotype.tables.condition_table)
     concept_table = _qualify_table(cdr, config.phenotype.tables.concept_table)
+    wgs_join = (
+        f"""
+JOIN `{cdr}.cb_search_person` cb_search_person
+  ON CAST(p.person_id AS STRING) = CAST(cb_search_person.person_id AS STRING)
+  AND cb_search_person.has_whole_genome_variant = 1
+""".rstrip()
+        if require_wgs
+        else ""
+    )
     return f"""
 WITH observation_windows AS (
   SELECT
@@ -243,6 +252,7 @@ SELECT
   denominator_mode.omop_condition_record_source,
   COALESCE(denominator_counts.omop_condition_record_dates, 0) >= 2 AS eligible_ehr_denominator
 FROM `{person_table}` p
+{wgs_join}
 LEFT JOIN observation_windows
   ON CAST(p.person_id AS STRING) = observation_windows.person_id
 LEFT JOIN `{concept_table}` g

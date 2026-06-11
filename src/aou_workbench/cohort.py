@@ -15,6 +15,7 @@ from .phenotype_sql import (
     render_case_tier_sql,
     render_clinical_cofactor_events_sql,
 )
+from .sample_restriction import restrict_frame_for_gwas
 
 
 PERIINDEX_COFACTOR_START_DAYS = -7
@@ -100,8 +101,8 @@ def _prepare_baseline_local(config: ProjectConfig) -> pd.DataFrame:
     return base
 
 
-def _prepare_baseline_bigquery(config: ProjectConfig) -> pd.DataFrame:
-    frame = query_bigquery_dataframe(render_baseline_sql(config))
+def _prepare_baseline_bigquery(config: ProjectConfig, *, require_wgs: bool = False) -> pd.DataFrame:
+    frame = query_bigquery_dataframe(render_baseline_sql(config, require_wgs=require_wgs))
     if frame.empty:
         return frame
     frame["obs_start_date"] = parse_date(frame["obs_start_date"])
@@ -645,7 +646,7 @@ def _finalize_cohort(
     return output
 
 
-def _build_local_cohort(config: ProjectConfig) -> pd.DataFrame:
+def _build_local_cohort(config: ProjectConfig, *, require_wgs: bool = False) -> pd.DataFrame:
     base = _prepare_baseline_local(config)
     base = base.merge(_prepare_denominator_local(config), on="person_id", how="left")
     base = base.merge(_prepare_ancestry_table(config), on="person_id", how="left")
@@ -677,11 +678,14 @@ def _build_local_cohort(config: ProjectConfig) -> pd.DataFrame:
         config.phenotype.control_exclusion_concept_ids,
     )
     finalized = _finalize_cohort(cohort, config, control_exclusion_ids=set(control_exclusions["person_id"]))
-    return apply_time_anchored_clinical_cofactors(config, finalized, clinical_events)
+    output = apply_time_anchored_clinical_cofactors(config, finalized, clinical_events)
+    if require_wgs:
+        output = restrict_frame_for_gwas(config, output, require_wgs=True)
+    return output
 
 
-def _build_bigquery_cohort(config: ProjectConfig) -> pd.DataFrame:
-    base = _prepare_baseline_bigquery(config)
+def _build_bigquery_cohort(config: ProjectConfig, *, require_wgs: bool = False) -> pd.DataFrame:
+    base = _prepare_baseline_bigquery(config, require_wgs=require_wgs)
     if base.empty:
         return base
     ancestry = _prepare_ancestry_table(config)
@@ -735,10 +739,10 @@ def _build_bigquery_cohort(config: ProjectConfig) -> pd.DataFrame:
     return apply_time_anchored_clinical_cofactors(config, finalized, clinical_events)
 
 
-def build_rhabdo_cohort(config: ProjectConfig) -> pd.DataFrame:
+def build_rhabdo_cohort(config: ProjectConfig, *, require_wgs: bool = False) -> pd.DataFrame:
     if config.phenotype.tables.cohort_table:
-        return _build_local_cohort(config)
-    return _build_bigquery_cohort(config)
+        return _build_local_cohort(config, require_wgs=require_wgs)
+    return _build_bigquery_cohort(config, require_wgs=require_wgs)
 
 
 def cohort_qc_summary(cohort_df: pd.DataFrame) -> dict[str, Any]:

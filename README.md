@@ -65,16 +65,15 @@ aou-workbench build-cohort
 aou-workbench match-controls
 ```
 
-For a genomics-first rerun, create the WGS/ACAF sample manifest first and restrict every cohort artifact to those samples:
+For a genomics-first rerun, restrict every cohort artifact directly to WGS-available participants:
 
 ```bash
-aou-workbench prepare-wgs-manifest
 aou-workbench build-cohort --require-wgs
 aou-workbench match-controls --require-wgs
 aou-workbench characterize-cohort --require-wgs
 ```
 
-`prepare-wgs-manifest` reads the CDR WGS availability flag from `cb_search_person.has_whole_genome_variant` and writes the manifest path used by downstream WGS restrictions. The `--require-wgs` commands then save a WGS-restricted built cohort, matched cohort, CONSORT, Table 1, split summaries, and clinical model input. Hail/ACAF MatrixTable overlap is checked later by the GWAS runner, but the cohort denominator starts from the CDR WGS flag. This is the preferred setup before any GWAS or PRS work.
+The `--require-wgs` commands filter directly in BigQuery with `cb_search_person.has_whole_genome_variant = 1`, then save a WGS-restricted built cohort, matched cohort, CONSORT, Table 1, split summaries, and clinical model input. Hail/ACAF MatrixTable overlap is checked later by the GWAS runner, but the cohort denominator starts from the CDR WGS flag. This is the preferred setup before any GWAS or PRS work. `prepare-wgs-manifest` remains available only as an optional audit/debug command.
 
 Characterize the inclusive case-control cohort before genomic modeling:
 

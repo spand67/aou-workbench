@@ -131,15 +131,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     build_parser = subparsers.add_parser("build-cohort", help="Build the tiered rhabdomyolysis cohort.")
     _add_config_arguments(build_parser)
-    build_parser.add_argument("--require-wgs", action="store_true", help="Restrict the saved cohort to WGS/ACAF sample IDs.")
+    build_parser.add_argument("--require-wgs", action="store_true", help="Restrict the saved cohort to participants with CDR WGS availability.")
 
     match_parser = subparsers.add_parser("match-controls", help="Build the matched case-control cohort.")
     _add_config_arguments(match_parser)
-    match_parser.add_argument("--require-wgs", action="store_true", help="Restrict the cohort and matching universe to WGS/ACAF sample IDs.")
+    match_parser.add_argument("--require-wgs", action="store_true", help="Restrict the cohort and matching universe to participants with CDR WGS availability.")
 
     wgs_manifest_parser = subparsers.add_parser(
         "prepare-wgs-manifest",
-        help="Write the WGS/ACAF sample manifest used for WGS-restricted cohort runs.",
+        help="Optionally write the CDR WGS sample IDs for audit/debugging. WGS-restricted cohort runs filter directly in SQL.",
     )
     _add_config_arguments(wgs_manifest_parser)
 
