@@ -740,7 +740,6 @@ def run_stage4_hail_pilot_gwas(
     )
     print(f"Reading {source} MT from {genotype_mt_path}", flush=True)
     mt = hl.read_matrix_table(genotype_mt_path)
-    mt = _key_matrix_table_by_sample_id(mt, hl)
 
     sample_ht = hl.Table.from_pandas(sample_df).key_by("s")
     intervals = [
@@ -748,12 +747,13 @@ def run_stage4_hail_pilot_gwas(
         for chromosome in chromosome_values
     ]
     mt = hl.filter_intervals(mt, intervals)
+    mt = _key_matrix_table_by_sample_id(mt, hl)
     mt = mt.semi_join_cols(sample_ht)
     mt = mt.annotate_cols(sample=sample_ht[mt.s])
-    gt_expr = _matrix_table_gt(mt, hl)
-    mt = mt.annotate_entries(_GT=gt_expr)
+    print("Counting MatrixTable sample overlap after chromosome and sample filters.", flush=True)
     matrix_table_participants = int(mt.count_cols())
     sample_counts["matrix_table_participants"] = matrix_table_participants
+    print(f"MatrixTable sample overlap: {matrix_table_participants}", flush=True)
     if matrix_table_participants == 0:
         return _postprocess_pilot_results(
             pd.DataFrame(),
@@ -776,6 +776,8 @@ def run_stage4_hail_pilot_gwas(
             dropped_covariates=dropped_covariates,
         )
 
+    gt_expr = _matrix_table_gt(mt, hl)
+    mt = mt.select_entries(_GT=gt_expr)
     bases = hl.literal({"A", "C", "G", "T"})
     biallelic_snp = (
         (hl.len(mt.alleles) == 2)
@@ -784,6 +786,7 @@ def run_stage4_hail_pilot_gwas(
         & bases.contains(mt.alleles[0])
         & bases.contains(mt.alleles[1])
     )
+    print("Counting variant rows and autosomal biallelic SNP rows.", flush=True)
     row_counts = mt.aggregate_rows(
         hl.struct(
             initial=hl.agg.count(),
@@ -828,6 +831,7 @@ def run_stage4_hail_pilot_gwas(
     mac_filter = maf_filter & hl.is_defined(mt.minor_allele_count) & (mt.minor_allele_count >= int(min_mac))
     call_rate_filter = mac_filter & hl.is_defined(mt.call_rate) & (mt.call_rate >= float(min_call_rate))
     final_qc_filter = call_rate_filter & hl.is_defined(mt.hwe_control_p) & (mt.hwe_control_p >= float(hwe_p_control))
+    print("Computing cumulative variant QC counts.", flush=True)
     qc_counts = mt.aggregate_rows(
         hl.struct(
             maf=hl.agg.count_where(maf_filter),
