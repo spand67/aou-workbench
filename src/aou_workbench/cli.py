@@ -48,6 +48,17 @@ from .cohort_summary import (
 )
 from .gwas_workflow import prepare_terminal_gwas_workspace
 from .io_utils import read_table
+from .microarray_plink_gwas import (
+    microarray_plink_default_label,
+    microarray_plink_lead_hits_path,
+    microarray_plink_manhattan_path,
+    microarray_plink_qc_path,
+    microarray_plink_qq_path,
+    microarray_plink_report_path,
+    microarray_plink_results_path,
+    microarray_plink_variant_qc_summary_path,
+    run_microarray_plink_gwas,
+)
 from .paths import build_output_paths, project_path
 from .pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
 from .preindex_profile import (
@@ -319,6 +330,88 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional row partition count after interval/sample/biallelic filtering. Default: source-specific.",
     )
 
+    microarray_plink_parser = subparsers.add_parser(
+        "run-microarray-plink-gwas",
+        help="Run the train-only matched-control GWAS pilot using local AoU v8 microarray PLINK BED/BIM/FAM files.",
+    )
+    _add_config_arguments(microarray_plink_parser)
+    microarray_plink_parser.add_argument(
+        "--chromosomes",
+        default="22",
+        help="Comma-separated autosome list. Default: 22.",
+    )
+    microarray_plink_parser.add_argument(
+        "--plink-prefix",
+        default=None,
+        help="Local PLINK prefix for arrays.bed/bim/fam. Default: ~/plink_microarray/arrays.",
+    )
+    microarray_plink_parser.add_argument(
+        "--copy-plink-to",
+        default=None,
+        help="Copy AoU microarray PLINK files into this local directory before running. Existing files are reused.",
+    )
+    microarray_plink_parser.add_argument(
+        "--overwrite-plink-copy",
+        action="store_true",
+        help="Re-copy AoU microarray PLINK files even when local files already exist.",
+    )
+    microarray_plink_parser.add_argument(
+        "--min-maf",
+        type=float,
+        default=0.05,
+        help="Minimum analysis-sample minor allele frequency. Default: 0.05.",
+    )
+    microarray_plink_parser.add_argument(
+        "--min-mac",
+        type=int,
+        default=20,
+        help="Minimum analysis-sample minor allele count. Default: 20.",
+    )
+    microarray_plink_parser.add_argument(
+        "--min-call-rate",
+        type=float,
+        default=0.98,
+        help="Minimum analysis-sample variant call rate. Default: 0.98.",
+    )
+    microarray_plink_parser.add_argument(
+        "--hwe-p-control",
+        type=float,
+        default=1e-6,
+        help="Minimum Hardy-Weinberg equilibrium p-value among controls. Default: 1e-6.",
+    )
+    microarray_plink_parser.add_argument(
+        "--analysis-split",
+        default="train",
+        help="Matched cohort analysis_split to use. Default: train.",
+    )
+    microarray_plink_parser.add_argument(
+        "--eligibility-flag",
+        default="primary_model_eligible",
+        help="Eligibility flag in matched cohort/clinical model input. Default: primary_model_eligible.",
+    )
+    microarray_plink_parser.add_argument(
+        "--label",
+        default=None,
+        help="Output label under stage4/microarray_plink/. Defaults to microarray_plink_chr<chromosomes>_maf<min-maf>_train_qc.",
+    )
+    microarray_plink_parser.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        help="Optional PLINK2 thread count.",
+    )
+    microarray_plink_parser.add_argument(
+        "--memory-mb",
+        type=int,
+        default=None,
+        help="Optional PLINK2 memory limit in MiB.",
+    )
+    microarray_plink_parser.add_argument(
+        "--plink2-bin",
+        default="plink2",
+        help="PLINK2 executable. Default: plink2.",
+    )
+
     for name in ("run-stage1", "run-stage2", "run-stage3", "run-stage4", "run-all"):
         stage_parser = subparsers.add_parser(name, help=f"Execute {name}.")
         _add_config_arguments(stage_parser)
@@ -511,6 +604,43 @@ def main(argv: list[str] | None = None) -> int:
         print(f"report: {hail_pilot_report_path(paths, label)}")
         print(f"manhattan: {hail_pilot_manhattan_path(paths, label)}")
         print(f"qq: {hail_pilot_qq_path(paths, label)}")
+        return 0
+
+    if args.command == "run-microarray-plink-gwas":
+        effective, paths, matched_df = _load_hail_pilot_matched_input(
+            config,
+            eligibility_flag=args.eligibility_flag,
+        )
+        chromosomes = [value.strip() for value in args.chromosomes.split(",") if value.strip()]
+        label = args.label or microarray_plink_default_label(chromosomes, min_maf=args.min_maf)
+        full, hits = run_microarray_plink_gwas(
+            effective,
+            matched_df,
+            paths,
+            chromosomes=chromosomes,
+            min_maf=args.min_maf,
+            min_mac=args.min_mac,
+            min_call_rate=args.min_call_rate,
+            hwe_p_control=args.hwe_p_control,
+            analysis_split=args.analysis_split,
+            eligibility_flag=args.eligibility_flag,
+            label=label,
+            plink_prefix=args.plink_prefix,
+            copy_plink_to=args.copy_plink_to,
+            overwrite_plink_copy=args.overwrite_plink_copy,
+            threads=args.threads,
+            memory_mb=args.memory_mb,
+            plink2_bin=args.plink2_bin,
+        )
+        print(f"Microarray PLINK GWAS variants tested: {full.shape[0]}")
+        print(f"Microarray PLINK GWAS lead hits: {hits.shape[0]}")
+        print(f"results: {microarray_plink_results_path(paths, label)}")
+        print(f"lead_hits: {microarray_plink_lead_hits_path(paths, label)}")
+        print(f"qc: {microarray_plink_qc_path(paths, label)}")
+        print(f"variant_qc_summary: {microarray_plink_variant_qc_summary_path(paths, label)}")
+        print(f"report: {microarray_plink_report_path(paths, label)}")
+        print(f"manhattan: {microarray_plink_manhattan_path(paths, label)}")
+        print(f"qq: {microarray_plink_qq_path(paths, label)}")
         return 0
 
     if args.command == "run-all":

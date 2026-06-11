@@ -10,5 +10,6 @@ exome_mt_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/exome
 clinvar_mt_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/clinvar/multiMT/hail.mt
 acaf_mt_path: gs://vwb-aou-datasets-controlled/v8/wgs/short_read/snpindel/acaf_threshold/splitMT/hail.mt
 microarray_mt_path: gs://vwb-aou-datasets-controlled/v8/microarray/hail.mt
+microarray_plink_prefix: gs://vwb-aou-datasets-controlled/v8/microarray/plink/arrays
 flagged_samples_path:
 max_unrelated_path:

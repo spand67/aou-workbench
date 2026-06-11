@@ -123,6 +123,24 @@ aou-workbench run-hail-pilot-gwas \
 
 The primary pilot phenotype is broad rhabdomyolysis cases versus matched eligible controls, restricted to the training split and `primary_model_eligible` rows so the test split remains untouched for later PRS/model evaluation. ACAF runs also restrict to the WGS manifest; microarray runs instead restrict to participants present in the microarray MatrixTable during the Hail column join. Covariates are `age_at_index`, `is_female`, and PC1-PC5; observation depth, condition-record depth, sepsis, renal injury, and crush injury are not GWAS covariates. The pilot computes variant QC inside the analysis sample and keeps autosomal biallelic SNPs with MAF >= 0.05, minor allele count >= 20, call rate >= 0.98, and control-only Hardy-Weinberg equilibrium p >= 1e-6. Microarray pilots default to repartitioning the filtered chromosome/sample MatrixTable to 64 row partitions before genotype QC so larger Spark clusters are actually used; override with `--target-partitions` or set it to `0` to disable repartitioning. Outputs are isolated under `stage4/hail_pilot/<label>/` and include GWAS results, lead hits, QC JSON, sequential variant QC counts, Manhattan and QQ plots, and a markdown report.
 
+For a faster chr22 microarray pilot, use the AoU v8 microarray PLINK BED/BIM/FAM files locally instead of the Hail MatrixTable:
+
+```bash
+aou-workbench run-microarray-plink-gwas \
+  --chromosomes 22 \
+  --copy-plink-to "$HOME/plink_microarray" \
+  --min-maf 0.05 \
+  --min-mac 20 \
+  --min-call-rate 0.98 \
+  --hwe-p-control 1e-6 \
+  --analysis-split train \
+  --eligibility-flag primary_model_eligible \
+  --threads "$(nproc)" \
+  --label microarray_plink_chr22_maf05_train_qc
+```
+
+This command reuses the same train-only broad-rhabdomyolysis case versus matched-control phenotype and covariates as the Hail pilot, but runs PLINK2 on the local microarray array files. `--copy-plink-to` explicitly copies the large `arrays.bed`, `arrays.bim`, and `arrays.fam` files once; later runs can reuse them with `--plink-prefix "$HOME/plink_microarray/arrays"`. Outputs are isolated under `stage4/microarray_plink/<label>/`.
+
 If submitting the pilot as a Dataproc job, include requester-pays Spark/Hadoop properties for the AoU controlled bucket:
 
 ```bash
