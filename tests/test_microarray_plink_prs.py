@@ -142,6 +142,8 @@ class MicroarrayPlinkPrsTests(unittest.TestCase):
         self.assertIn("--clump-r2", clump_cmd)
         self.assertIn("0.1", clump_cmd)
         self.assertIn("--score", score_cmd)
+        self.assertIn("--extract", score_cmd)
+        self.assertIn("prs_variant_ids.txt", " ".join(score_cmd))
         self.assertIn("--q-score-range", score_cmd)
         self.assertIn("cols=+scoresums", score_cmd)
         self.assertIn("list-variants", score_cmd)
@@ -171,6 +173,22 @@ class MicroarrayPlinkPrsTests(unittest.TestCase):
         self.assertEqual(scores.shape[0], 4)
         self.assertEqual(set(scores["threshold_label"]), {"p0_01", "p1"})
         self.assertEqual(set(scores["person_id"]), {"1", "2"})
+
+    def test_parse_prs_score_files_accepts_plink_without_score_named_column(self) -> None:
+        config, _ = self._config_and_matched()
+        output_paths = build_output_paths(config)
+        outdir = Path(microarray_prs_output_dir(output_paths, "gwas_fallback", "prs"))
+        outdir.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            [
+                {"#FID": "0", "IID": "1", "ALLELE_CT": "10", "DENOM": "10", "PRS_TOTAL": "0.2"},
+                {"#FID": "0", "IID": "2", "ALLELE_CT": "10", "DENOM": "10", "PRS_TOTAL": "-0.1"},
+            ]
+        ).to_csv(outdir / "plink_prs.p0_01.sscore", sep="\t", index=False)
+
+        scores = parse_prs_score_files(output_paths, "gwas_fallback", "prs")
+
+        self.assertEqual(scores["prs_score"].tolist(), [0.2, -0.1])
 
     def test_prs_metrics_compute_auc_and_or_per_sd(self) -> None:
         scores = pd.DataFrame(

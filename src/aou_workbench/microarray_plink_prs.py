@@ -53,6 +53,10 @@ def microarray_prs_scores_path(paths: ProjectPaths, gwas_label: str, prs_label: 
     return join_path(microarray_prs_output_dir(paths, gwas_label, prs_label), "prs_scores.tsv")
 
 
+def microarray_prs_extract_path(paths: ProjectPaths, gwas_label: str, prs_label: str) -> str:
+    return join_path(microarray_prs_output_dir(paths, gwas_label, prs_label), "prs_variant_ids.txt")
+
+
 def microarray_prs_metrics_path(paths: ProjectPaths, gwas_label: str, prs_label: str) -> str:
     return join_path(microarray_prs_output_dir(paths, gwas_label, prs_label), "prs_metrics.tsv")
 
@@ -250,6 +254,8 @@ def build_microarray_prs_commands(
         plink_prefix,
         "--keep",
         microarray_prs_keep_path(paths, gwas_label, prs_label, score_split),
+        "--extract",
+        microarray_prs_extract_path(paths, gwas_label, prs_label),
         "--score",
         microarray_prs_weights_path(paths, gwas_label, prs_label),
         "1",
@@ -297,6 +303,11 @@ def _write_clumped_weights(weights: pd.DataFrame, clumped_ids: set[str], path: s
     return selected
 
 
+def _write_extract_ids(weights: pd.DataFrame, path: str) -> None:
+    ensure_parent_dir(path)
+    weights["ID"].astype(str).to_csv(path, index=False, header=False)
+
+
 def _score_files(paths: ProjectPaths, gwas_label: str, prs_label: str) -> list[Path]:
     prefix = Path(_prs_prefix(paths, gwas_label, prs_label, "plink_prs"))
     return sorted(prefix.parent.glob(f"{prefix.name}.*.sscore"))
@@ -316,7 +327,32 @@ def _score_column(frame: pd.DataFrame) -> str:
     score_columns = [column for column in frame.columns if "SCORE" in column.upper()]
     if score_columns:
         return score_columns[-1]
-    raise RuntimeError("Could not find a SCORE column in PLINK .sscore output.")
+    metadata = {
+        "#FID",
+        "FID",
+        "#IID",
+        "IID",
+        "PAT",
+        "MAT",
+        "SEX",
+        "PHENO1",
+        "ALLELE_CT",
+        "DENOM",
+        "NAMED_ALLELE_DOSAGE_SUM",
+    }
+    numeric_candidates = []
+    for column in frame.columns:
+        if column in metadata:
+            continue
+        numeric = pd.to_numeric(frame[column], errors="coerce")
+        if numeric.notna().any():
+            numeric_candidates.append(column)
+    if numeric_candidates:
+        return numeric_candidates[-1]
+    raise RuntimeError(
+        "Could not find a score column in PLINK .sscore output. "
+        f"Observed columns: {', '.join(frame.columns.astype(str))}"
+    )
 
 
 def parse_prs_score_files(paths: ProjectPaths, gwas_label: str, prs_label: str) -> pd.DataFrame:
@@ -585,11 +621,18 @@ def run_microarray_plink_prs(
         threads=threads,
         memory_mb=memory_mb,
     )
-    _run_command(clump_cmd)
+    if _clump_file(paths, gwas_label, prs_label):
+        print(f"Using existing PLINK clump output for {prs_label}.", flush=True)
+    else:
+        _run_command(clump_cmd)
     clumped_ids = parse_clumped_variant_ids(_clump_file(paths, gwas_label, prs_label))
     clumped_weights = _write_clumped_weights(weights, clumped_ids, microarray_prs_weights_path(paths, gwas_label, prs_label))
+    _write_extract_ids(clumped_weights, microarray_prs_extract_path(paths, gwas_label, prs_label))
     if not clumped_weights.empty and not sample_df.empty:
-        _run_command(score_cmd)
+        if _score_files(paths, gwas_label, prs_label):
+            print(f"Using existing PLINK score output for {prs_label}.", flush=True)
+        else:
+            _run_command(score_cmd)
     scores = parse_prs_score_files(paths, gwas_label, prs_label)
     score_sample = sample_df[["person_id", config.analysis.matched_outcome_column]].rename(
         columns={config.analysis.matched_outcome_column: "analysis_case"}
@@ -667,6 +710,7 @@ __all__ = [
     "microarray_prs_default_label",
     "microarray_prs_keep_path",
     "microarray_prs_metrics_path",
+    "microarray_prs_extract_path",
     "microarray_prs_qc_path",
     "microarray_prs_range_path",
     "microarray_prs_report_path",
