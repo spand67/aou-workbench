@@ -26,7 +26,7 @@ from .reporting import write_stage_report
 from .stage4_hail_gwas import _pilot_case_control_definition_mask
 from .statistics import run_binary_logistic_regression
 
-DEFAULT_PRS_THRESHOLDS = (5e-8, 1e-6, 1e-5, 1e-4, 1e-3, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0)
+DEFAULT_PRS_THRESHOLDS = (0.01,)
 
 
 def microarray_prs_default_label(score_split: str) -> str:

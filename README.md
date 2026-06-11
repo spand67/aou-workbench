@@ -153,12 +153,12 @@ aou-workbench run-microarray-plink-prs \
   --clump-kb 250 \
   --clump-p1 1.0 \
   --clump-p2 1.0 \
-  --thresholds 5e-8,1e-6,1e-5,1e-4,1e-3,0.01,0.05,0.1,0.2,0.5,1.0 \
+  --thresholds 0.01 \
   --threads "$(nproc)" \
   --label test_clumped_threshold_grid
 ```
 
-This scores the held-out `test` split only, using training-GWAS effect sizes from the selected microarray GWAS label. Outputs are written under `stage4/microarray_plink/<gwas-label>/prs/<label>/` and include clumped weights, p-value ranges, `.sscore` files, combined PRS scores, PRS-only metrics, a case/control score plot, QC JSON, and a report. Threshold comparisons are exploratory; do not select a threshold on the held-out test set for later model tuning.
+This scores the held-out `test` split only at the `p <= 0.01` threshold, using training-GWAS effect sizes from the selected microarray GWAS label. Outputs are written under `stage4/microarray_plink/<gwas-label>/prs/<label>/` and include clumped weights, the p-value range, `.sscore` files, combined PRS scores, PRS-only metrics, a case/control score plot, QC JSON, and a report.
 
 If submitting the pilot as a Dataproc job, include requester-pays Spark/Hadoop properties for the AoU controlled bucket:
 

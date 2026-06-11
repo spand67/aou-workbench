@@ -203,10 +203,7 @@ class MicroarrayPlinkPrsTests(unittest.TestCase):
         self.assertEqual(args.clump_p1, 1.0)
         self.assertEqual(args.clump_p2, 1.0)
         self.assertEqual(microarray_prs_default_label("test"), "test_clumped_threshold_grid")
-        self.assertEqual(
-            args.thresholds,
-            "5e-08,1e-06,1e-05,0.0001,0.001,0.01,0.05,0.1,0.2,0.5,1",
-        )
+        self.assertEqual(args.thresholds, "0.01")
 
 
 if __name__ == "__main__":
