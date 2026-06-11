@@ -312,6 +312,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Output label under stage4/hail_pilot/. Defaults to <genotype-source>_chr<chromosomes>_maf<min-maf>_train_qc.",
     )
+    hail_pilot_parser.add_argument(
+        "--target-partitions",
+        type=int,
+        default=None,
+        help="Optional row partition count after interval/sample/biallelic filtering. Default: source-specific.",
+    )
 
     for name in ("run-stage1", "run-stage2", "run-stage3", "run-stage4", "run-all"):
         stage_parser = subparsers.add_parser(name, help=f"Execute {name}.")
@@ -494,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
             eligibility_flag=args.eligibility_flag,
             label=label,
             genotype_source=args.genotype_source,
+            target_partitions=args.target_partitions,
         )
         print(f"Hail pilot GWAS variants tested: {full.shape[0]}")
         print(f"Hail pilot GWAS lead hits: {hits.shape[0]}")

@@ -19,6 +19,7 @@ from aou_workbench.stage4_hail_gwas import (
     _hail_sample_frame,
     _normalize_autosomal_chromosomes,
     _normalize_chromosomes,
+    _pilot_default_target_partitions,
     _pilot_restricts_to_wgs_manifest,
     _variant_qc_summary_rows,
     hail_pilot_default_label,
@@ -45,6 +46,9 @@ class Stage4HailGwasTests(unittest.TestCase):
         )
         self.assertTrue(_pilot_restricts_to_wgs_manifest("acaf"))
         self.assertFalse(_pilot_restricts_to_wgs_manifest("microarray"))
+        self.assertEqual(_pilot_default_target_partitions("acaf", ["22"]), 0)
+        self.assertEqual(_pilot_default_target_partitions("microarray", ["22"]), 64)
+        self.assertEqual(_pilot_default_target_partitions("microarray", ["21", "22"]), 128)
 
     def test_hail_sample_frame_builds_complete_case_numeric_covariates(self) -> None:
         paths = build_demo_project_tree()
@@ -272,9 +276,13 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertEqual(args.eligibility_flag, "primary_model_eligible")
         self.assertEqual(args.genotype_source, "acaf")
         self.assertIsNone(args.label)
+        self.assertIsNone(args.target_partitions)
 
-        microarray_args = parser.parse_args(["run-hail-pilot-gwas", "--genotype-source", "microarray"])
+        microarray_args = parser.parse_args(
+            ["run-hail-pilot-gwas", "--genotype-source", "microarray", "--target-partitions", "96"]
+        )
         self.assertEqual(microarray_args.genotype_source, "microarray")
+        self.assertEqual(microarray_args.target_partitions, 96)
 
 
 if __name__ == "__main__":

@@ -118,6 +118,13 @@ def _pilot_restricts_to_wgs_manifest(genotype_source: str) -> bool:
     return _normalize_genotype_source(genotype_source) == "acaf"
 
 
+def _pilot_default_target_partitions(genotype_source: str, chromosomes: list[str]) -> int:
+    source = _normalize_genotype_source(genotype_source)
+    if source == "microarray":
+        return max(64, 64 * max(1, len(chromosomes)))
+    return 0
+
+
 def _key_matrix_table_by_sample_id(mt, hl):
     if "s" in mt.col:
         return mt.key_cols_by("s")
@@ -473,6 +480,7 @@ def _postprocess_pilot_results(
     min_mac: int,
     min_call_rate: float,
     hwe_p_control: float,
+    target_partitions: int,
     sample_counts: dict[str, int],
     wgs_manifest_used: bool,
     genotype_source: str,
@@ -514,6 +522,7 @@ def _postprocess_pilot_results(
             "min_mac": int(min_mac),
             "min_call_rate": float(min_call_rate),
             "hwe_p_control": float(hwe_p_control),
+            "target_partitions": int(target_partitions),
             "covariates_used": covariates_used,
             "dropped_covariates": dropped_covariates,
         },
@@ -539,6 +548,7 @@ def _postprocess_pilot_results(
             f"- Variants tested after QC: {full.shape[0]}",
             f"- Lead hits: {lead_hits.shape[0]}",
             f"- Variant QC: MAF >= {min_maf}, MAC >= {min_mac}, call rate >= {min_call_rate}, control HWE p >= {hwe_p_control}",
+            f"- Target row partitions after interval/sample/biallelic filtering: {target_partitions or 'source default/no repartition'}",
             f"- Covariates: {', '.join(covariates_used) if covariates_used else 'intercept only'}",
             (
                 f"- Dropped unstable covariates: {', '.join(dropped_covariates)}"
@@ -685,6 +695,7 @@ def run_stage4_hail_pilot_gwas(
     eligibility_flag: str = "primary_model_eligible",
     label: str | None = None,
     genotype_source: str = "acaf",
+    target_partitions: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     stage = config.analysis.stage4
     if stage is None:
@@ -695,6 +706,11 @@ def run_stage4_hail_pilot_gwas(
     label = label or hail_pilot_default_label(source, chromosome_values, min_maf=min_maf)
     genotype_mt_path = _pilot_genotype_mt_path(config, source)
     restrict_to_wgs_manifest = _pilot_restricts_to_wgs_manifest(source)
+    effective_target_partitions = (
+        _pilot_default_target_partitions(source, chromosome_values)
+        if target_partitions is None
+        else int(target_partitions)
+    )
     (
         sample_df,
         hail_covariates,
@@ -726,6 +742,7 @@ def run_stage4_hail_pilot_gwas(
             min_mac=min_mac,
             min_call_rate=min_call_rate,
             hwe_p_control=hwe_p_control,
+            target_partitions=effective_target_partitions,
             sample_counts=sample_counts,
             wgs_manifest_used=wgs_manifest_used,
             genotype_source=source,
@@ -768,6 +785,7 @@ def run_stage4_hail_pilot_gwas(
             min_mac=min_mac,
             min_call_rate=min_call_rate,
             hwe_p_control=hwe_p_control,
+            target_partitions=effective_target_partitions,
             sample_counts=sample_counts,
             wgs_manifest_used=wgs_manifest_used,
             genotype_source=source,
@@ -785,10 +803,18 @@ def run_stage4_hail_pilot_gwas(
         & bases.contains(mt.alleles[1])
     )
     print("Counting variant rows and autosomal biallelic SNP rows.", flush=True)
-    row_counts = mt.aggregate_rows(
+    row_ht = mt.rows()
+    row_biallelic_snp = (
+        (hl.len(row_ht.alleles) == 2)
+        & (hl.len(row_ht.alleles[0]) == 1)
+        & (hl.len(row_ht.alleles[1]) == 1)
+        & bases.contains(row_ht.alleles[0])
+        & bases.contains(row_ht.alleles[1])
+    )
+    row_counts = row_ht.aggregate(
         hl.struct(
             initial=hl.agg.count(),
-            biallelic=hl.agg.count_where(biallelic_snp),
+            biallelic=hl.agg.count_where(row_biallelic_snp),
         )
     )
     initial_rows = int(row_counts.initial)
@@ -796,6 +822,12 @@ def run_stage4_hail_pilot_gwas(
     mt = mt.filter_rows(biallelic_snp)
     gt_expr = _matrix_table_gt(mt, hl)
     mt = mt.select_entries(_GT=gt_expr)
+    if effective_target_partitions > 0:
+        print(
+            f"Repartitioning filtered MatrixTable rows to {effective_target_partitions} partitions before genotype QC.",
+            flush=True,
+        )
+        mt = mt.repartition(effective_target_partitions, shuffle=True)
 
     outcome = config.analysis.matched_outcome_column
     mt = mt.annotate_rows(call_stats=hl.agg.call_stats(mt._GT, mt.alleles))
@@ -932,6 +964,7 @@ def run_stage4_hail_pilot_gwas(
         min_mac=min_mac,
         min_call_rate=min_call_rate,
         hwe_p_control=hwe_p_control,
+        target_partitions=effective_target_partitions,
         sample_counts=sample_counts,
         wgs_manifest_used=wgs_manifest_used,
         genotype_source=source,

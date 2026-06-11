@@ -117,10 +117,11 @@ aou-workbench run-hail-pilot-gwas \
   --min-call-rate 0.98 \
   --hwe-p-control 1e-6 \
   --analysis-split train \
-  --eligibility-flag primary_model_eligible
+  --eligibility-flag primary_model_eligible \
+  --target-partitions 64
 ```
 
-The primary pilot phenotype is broad rhabdomyolysis cases versus matched eligible controls, restricted to the training split and `primary_model_eligible` rows so the test split remains untouched for later PRS/model evaluation. ACAF runs also restrict to the WGS manifest; microarray runs instead restrict to participants present in the microarray MatrixTable during the Hail column join. Covariates are `age_at_index`, `is_female`, and PC1-PC5; observation depth, condition-record depth, sepsis, renal injury, and crush injury are not GWAS covariates. The pilot computes variant QC inside the analysis sample and keeps autosomal biallelic SNPs with MAF >= 0.05, minor allele count >= 20, call rate >= 0.98, and control-only Hardy-Weinberg equilibrium p >= 1e-6. Outputs are isolated under `stage4/hail_pilot/<label>/` and include GWAS results, lead hits, QC JSON, sequential variant QC counts, Manhattan and QQ plots, and a markdown report.
+The primary pilot phenotype is broad rhabdomyolysis cases versus matched eligible controls, restricted to the training split and `primary_model_eligible` rows so the test split remains untouched for later PRS/model evaluation. ACAF runs also restrict to the WGS manifest; microarray runs instead restrict to participants present in the microarray MatrixTable during the Hail column join. Covariates are `age_at_index`, `is_female`, and PC1-PC5; observation depth, condition-record depth, sepsis, renal injury, and crush injury are not GWAS covariates. The pilot computes variant QC inside the analysis sample and keeps autosomal biallelic SNPs with MAF >= 0.05, minor allele count >= 20, call rate >= 0.98, and control-only Hardy-Weinberg equilibrium p >= 1e-6. Microarray pilots default to repartitioning the filtered chromosome/sample MatrixTable to 64 row partitions before genotype QC so larger Spark clusters are actually used; override with `--target-partitions` or set it to `0` to disable repartitioning. Outputs are isolated under `stage4/hail_pilot/<label>/` and include GWAS results, lead hits, QC JSON, sequential variant QC counts, Manhattan and QQ plots, and a markdown report.
 
 If submitting the pilot as a Dataproc job, include requester-pays Spark/Hadoop properties for the AoU controlled bucket:
 
