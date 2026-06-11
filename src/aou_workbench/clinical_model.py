@@ -21,7 +21,7 @@ _CONTINUOUS_FEATURES: tuple[tuple[str, str, Callable[[pd.Series], pd.Series]], .
     ("observation_days", "log_observation_days_per_sd", np.log1p),
     ("omop_condition_record_dates", "log_condition_record_dates_per_sd", np.log1p),
 )
-_BINARY_FEATURES = ("preindex_sepsis", "preindex_renal_injury")
+_BINARY_FEATURES = ("remote_preindex_sepsis", "remote_preindex_renal_injury")
 _CATEGORICAL_FEATURES = {
     "model_sex_category": ("female", "male", "other_or_unknown", "missing"),
     "model_ancestry_pred": ("eur", "afr", "amr", "eas", "sas", "mid", "other", "missing"),

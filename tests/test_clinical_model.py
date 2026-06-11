@@ -45,7 +45,8 @@ class ClinicalModelTests(unittest.TestCase):
         self.assertTrue(Path(clinical_model_report_path(output_paths)).exists())
 
         feature_text = "\n".join(coefficients["feature"].astype(str).tolist())
-        self.assertIn("preindex", feature_text)
+        self.assertIn("remote_preindex", feature_text)
+        self.assertNotIn("near_preindex", feature_text)
         self.assertNotIn("periindex", feature_text)
         self.assertNotIn("postindex", feature_text)
 

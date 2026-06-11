@@ -20,6 +20,7 @@ from .sample_restriction import restrict_frame_for_gwas
 
 PERIINDEX_COFACTOR_START_DAYS = -7
 PERIINDEX_COFACTOR_END_DAYS = 45
+REMOTE_PREINDEX_COFACTOR_CUTOFF_DAYS = -30
 
 
 def _normalize_sex(series: pd.Series) -> pd.Series:
@@ -486,7 +487,7 @@ def apply_time_anchored_clinical_cofactors(
     for name in names:
         base_values = output[name] if name in output.columns else pd.Series(0, index=output.index)
         output[name] = pd.to_numeric(base_values, errors="coerce").fillna(0).astype(int)
-        for prefix in ("preindex", "periindex", "postindex"):
+        for prefix in ("remote_preindex", "near_preindex", "preindex", "periindex", "postindex"):
             output[f"{prefix}_{name}"] = 0
     if events is None:
         events = (
@@ -517,6 +518,12 @@ def apply_time_anchored_clinical_cofactors(
         return output
     timed["delta_days"] = (timed["condition_date"] - timed["index_date"]).dt.days
     masks = {
+        "remote_preindex": timed["delta_days"] < REMOTE_PREINDEX_COFACTOR_CUTOFF_DAYS,
+        "near_preindex": timed["delta_days"].between(
+            REMOTE_PREINDEX_COFACTOR_CUTOFF_DAYS,
+            periindex_start_days - 1,
+            inclusive="both",
+        ),
         "preindex": timed["delta_days"] < periindex_start_days,
         "periindex": timed["delta_days"].between(periindex_start_days, periindex_end_days, inclusive="both"),
         "postindex": timed["delta_days"] > periindex_end_days,
@@ -761,6 +768,7 @@ def cohort_qc_summary(cohort_df: pd.DataFrame) -> dict[str, Any]:
 __all__ = [
     "PERIINDEX_COFACTOR_END_DAYS",
     "PERIINDEX_COFACTOR_START_DAYS",
+    "REMOTE_PREINDEX_COFACTOR_CUTOFF_DAYS",
     "apply_time_anchored_clinical_cofactors",
     "build_rhabdo_cohort",
     "cohort_qc_summary",
