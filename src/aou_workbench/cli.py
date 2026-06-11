@@ -72,6 +72,12 @@ from .microarray_plink_prs import (
     parse_thresholds,
     run_microarray_plink_prs,
 )
+from .model_comparison import (
+    model_comparison_metrics_path,
+    model_comparison_predictions_path,
+    model_comparison_report_path,
+    run_heldout_model_comparison,
+)
 from .paths import build_output_paths, project_path
 from .pipeline import build_cohort_artifacts, match_controls_artifacts, render_existing_report, run_all
 from .preindex_profile import (
@@ -511,6 +517,43 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     clinical_model_parser.add_argument("--require-wgs", action="store_true", help="Build/load WGS-restricted cohort artifacts.")
 
+    model_comparison_parser = subparsers.add_parser(
+        "compare-prs-models",
+        help="Compare held-out clinical-only and PRS-only model performance on participants with both predictions.",
+    )
+    _add_config_arguments(model_comparison_parser)
+    model_comparison_parser.add_argument(
+        "--gwas-label",
+        required=True,
+        help="Microarray PLINK GWAS label used as the PRS source.",
+    )
+    model_comparison_parser.add_argument(
+        "--prs-label",
+        required=True,
+        help="PRS label under stage4/microarray_plink/<gwas-label>/prs/.",
+    )
+    model_comparison_parser.add_argument(
+        "--label",
+        default=None,
+        help="Output label under clinical/model_comparison/. Default: <gwas-label>_<prs-label>_heldout.",
+    )
+    model_comparison_parser.add_argument(
+        "--eligibility-flag",
+        default="primary_model_eligible",
+        help="Eligibility flag for rerunning the clinical model if needed. Default: primary_model_eligible.",
+    )
+    model_comparison_parser.add_argument(
+        "--l2-penalty",
+        type=float,
+        default=1.0,
+        help="L2 penalty if the clinical model must be rerun. Default: 1.0.",
+    )
+    model_comparison_parser.add_argument(
+        "--rerun-clinical-model",
+        action="store_true",
+        help="Force rerunning the clinical model before comparing.",
+    )
+
     preindex_parser = subparsers.add_parser(
         "profile-preindex-cases",
         help="Summarize what condition, lab, and biomarker data are available before rhabdo index dates for cases.",
@@ -849,6 +892,26 @@ def main(argv: list[str] | None = None) -> int:
         report_paths = render_existing_report(config)
         print(f"analysis_report: {report_paths.final_report_md}")
         print(f"analysis_dashboard: {report_paths.final_dashboard_html}")
+        return 0
+
+    if args.command == "compare-prs-models":
+        effective = apply_runtime_defaults(config)
+        paths = build_output_paths(effective)
+        outputs = run_heldout_model_comparison(
+            effective,
+            paths,
+            gwas_label=args.gwas_label,
+            prs_label=args.prs_label,
+            label=args.label,
+            rerun_clinical_model=args.rerun_clinical_model,
+            eligibility_flag=args.eligibility_flag,
+            l2_penalty=args.l2_penalty,
+        )
+        metrics = outputs["metrics"]
+        print(f"Held-out model comparison rows: {metrics.shape[0]}")
+        print(f"metrics: {model_comparison_metrics_path(paths, args.label or f'{args.gwas_label}_{args.prs_label}_heldout')}")
+        print(f"predictions: {model_comparison_predictions_path(paths, args.label or f'{args.gwas_label}_{args.prs_label}_heldout')}")
+        print(f"report: {model_comparison_report_path(paths, args.label or f'{args.gwas_label}_{args.prs_label}_heldout')}")
         return 0
 
     if args.command == "profile-preindex-cases":

@@ -160,6 +160,17 @@ aou-workbench run-microarray-plink-prs \
 
 This scores the held-out `test` split only at the `p <= 0.01` threshold, using training-GWAS effect sizes from the selected microarray GWAS label. Outputs are written under `stage4/microarray_plink/<gwas-label>/prs/<label>/` and include clumped weights, the p-value range, `.sscore` files, combined PRS scores, PRS-only metrics, a case/control score plot, QC JSON, and a report.
 
+Compare the held-out clinical-only model against the held-out PRS-only scores on participants with both outputs:
+
+```bash
+aou-workbench compare-prs-models \
+  --gwas-label microarray_plink_autosomes_maf05_train_qc \
+  --prs-label test-clumped-p001 \
+  --label clinical_vs_prs_p001
+```
+
+This writes `clinical/model_comparison/<label>/metrics.tsv`, `predictions.tsv`, and `report.md`. The comparison does not train a clinical+PRS combiner, because that requires cross-fitted or validation PRS scores rather than using the final held-out test split for tuning.
+
 If submitting the pilot as a Dataproc job, include requester-pays Spark/Hadoop properties for the AoU controlled bucket:
 
 ```bash
