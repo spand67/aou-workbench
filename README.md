@@ -171,6 +171,22 @@ aou-workbench compare-prs-models \
 
 This writes `clinical/model_comparison/<label>/metrics.tsv`, `predictions.tsv`, and `report.md`. The comparison does not train a clinical+PRS combiner, because that requires cross-fitted or validation PRS scores rather than using the final held-out test split for tuning.
 
+For the pragmatic first-pass combined model, score the train split with the same clumped PRS weights, train clinical+PRS on train, and evaluate once on held-out test:
+
+```bash
+aou-workbench run-clinical-prs-model \
+  --gwas-label microarray_plink_autosomes_maf05_train_qc \
+  --prs-label test-clumped-p001 \
+  --plink-prefix "$HOME/plink_microarray/arrays" \
+  --plink2-bin "$HOME/.conda/envs/plink2/bin/plink2" \
+  --threshold-label p0_01 \
+  --p-threshold 0.01 \
+  --threads "$(nproc)" \
+  --label clinical_prs_p001
+```
+
+This option deliberately uses the train-derived PRS on the training participants to fit the combined logistic model, then evaluates once on the held-out test split. Treat train metrics and the PRS coefficient as optimistic; use the test metrics as the main readout. Outputs are written under `clinical/clinical_prs_model/<label>/`.
+
 If submitting the pilot as a Dataproc job, include requester-pays Spark/Hadoop properties for the AoU controlled bucket:
 
 ```bash

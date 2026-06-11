@@ -19,6 +19,18 @@ from .clinical_model import (
     clinical_model_roc_svg_path,
     run_clinical_model,
 )
+from .clinical_prs_model import (
+    clinical_prs_model_calibration_path,
+    clinical_prs_model_calibration_svg_path,
+    clinical_prs_model_coefficients_path,
+    clinical_prs_model_default_label,
+    clinical_prs_model_metrics_path,
+    clinical_prs_model_predictions_path,
+    clinical_prs_model_pr_svg_path,
+    clinical_prs_model_report_path,
+    clinical_prs_model_roc_svg_path,
+    run_clinical_prs_model,
+)
 from .config import load_project_config
 from .cohort import apply_time_anchored_clinical_cofactors
 from .cohort_summary import (
@@ -554,6 +566,61 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Force rerunning the clinical model before comparing.",
     )
 
+    clinical_prs_parser = subparsers.add_parser(
+        "run-clinical-prs-model",
+        help="Train a pragmatic clinical+PRS model on train and evaluate once on held-out test.",
+    )
+    _add_config_arguments(clinical_prs_parser)
+    clinical_prs_parser.add_argument(
+        "--gwas-label",
+        required=True,
+        help="Microarray PLINK GWAS label used as the PRS source.",
+    )
+    clinical_prs_parser.add_argument(
+        "--prs-label",
+        required=True,
+        help="Existing test PRS label under stage4/microarray_plink/<gwas-label>/prs/.",
+    )
+    clinical_prs_parser.add_argument(
+        "--plink-prefix",
+        default=None,
+        help="Local PLINK prefix for arrays.bed/bim/fam. Default: ~/plink_microarray/arrays.",
+    )
+    clinical_prs_parser.add_argument(
+        "--plink2-bin",
+        default="plink2",
+        help="PLINK2 executable. Default: plink2.",
+    )
+    clinical_prs_parser.add_argument(
+        "--threshold-label",
+        default="p0_01",
+        help="Threshold label to use from prs_scores.tsv. Default: p0_01.",
+    )
+    clinical_prs_parser.add_argument(
+        "--p-threshold",
+        type=float,
+        default=0.01,
+        help="P-value threshold used to filter clumped PRS weights for train scoring. Default: 0.01.",
+    )
+    clinical_prs_parser.add_argument(
+        "--label",
+        default=None,
+        help="Output label under clinical/clinical_prs_model/. Default: clinical_prs_<prs-label>.",
+    )
+    clinical_prs_parser.add_argument(
+        "--eligibility-flag",
+        default="primary_model_eligible",
+        help="Eligibility flag in clinical_model_input.tsv. Default: primary_model_eligible.",
+    )
+    clinical_prs_parser.add_argument(
+        "--l2-penalty",
+        type=float,
+        default=1.0,
+        help="L2 penalty for regularized logistic regression. Default: 1.0.",
+    )
+    clinical_prs_parser.add_argument("--threads", type=int, default=None, help="Optional PLINK2 thread count for train scoring.")
+    clinical_prs_parser.add_argument("--memory-mb", type=int, default=None, help="Optional PLINK2 memory limit in MiB.")
+
     preindex_parser = subparsers.add_parser(
         "profile-preindex-cases",
         help="Summarize what condition, lab, and biomarker data are available before rhabdo index dates for cases.",
@@ -912,6 +979,39 @@ def main(argv: list[str] | None = None) -> int:
         print(f"metrics: {model_comparison_metrics_path(paths, args.label or f'{args.gwas_label}_{args.prs_label}_heldout')}")
         print(f"predictions: {model_comparison_predictions_path(paths, args.label or f'{args.gwas_label}_{args.prs_label}_heldout')}")
         print(f"report: {model_comparison_report_path(paths, args.label or f'{args.gwas_label}_{args.prs_label}_heldout')}")
+        return 0
+
+    if args.command == "run-clinical-prs-model":
+        effective = apply_runtime_defaults(config)
+        paths = build_output_paths(effective)
+        label = args.label or clinical_prs_model_default_label(args.prs_label)
+        outputs = run_clinical_prs_model(
+            effective,
+            paths,
+            gwas_label=args.gwas_label,
+            prs_label=args.prs_label,
+            plink_prefix=args.plink_prefix,
+            plink2_bin=args.plink2_bin,
+            threshold_label=args.threshold_label,
+            p_threshold=args.p_threshold,
+            label=label,
+            eligibility_flag=args.eligibility_flag,
+            l2_penalty=args.l2_penalty,
+            threads=args.threads,
+            memory_mb=args.memory_mb,
+        )
+        metrics = outputs["metrics"]
+        test_metrics = metrics[metrics["evaluation_set"] == "test"].iloc[0]
+        print(f"Clinical+PRS model test ROC AUC: {test_metrics['roc_auc']:.4f}")
+        print(f"Clinical+PRS model test average precision: {test_metrics['average_precision']:.4f}")
+        print(f"metrics: {clinical_prs_model_metrics_path(paths, label)}")
+        print(f"coefficients: {clinical_prs_model_coefficients_path(paths, label)}")
+        print(f"predictions: {clinical_prs_model_predictions_path(paths, label)}")
+        print(f"calibration: {clinical_prs_model_calibration_path(paths, label)}")
+        print(f"report: {clinical_prs_model_report_path(paths, label)}")
+        print(f"roc: {clinical_prs_model_roc_svg_path(paths, label)}")
+        print(f"precision_recall: {clinical_prs_model_pr_svg_path(paths, label)}")
+        print(f"calibration_plot: {clinical_prs_model_calibration_svg_path(paths, label)}")
         return 0
 
     if args.command == "profile-preindex-cases":
