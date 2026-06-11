@@ -139,6 +139,36 @@ def _stable_hail_covariates(
     return kept, dropped
 
 
+def _flag_mask(frame: pd.DataFrame, column: str) -> pd.Series:
+    values = frame[column]
+    numeric = pd.to_numeric(values, errors="coerce").fillna(0)
+    string = values.astype("string").str.lower().str.strip()
+    return numeric.ne(0) | string.isin({"true", "t", "yes", "y"})
+
+
+def _pilot_case_control_definition_mask(sample: pd.DataFrame, outcome_column: str) -> pd.Series:
+    required = {"match_group_id", "case_tier", "eligible_control"}
+    missing = sorted(required.difference(sample.columns))
+    if missing:
+        raise RuntimeError(
+            "Matched cohort is missing required Hail pilot case-control columns: "
+            + ", ".join(missing)
+            + ". Run `aou-workbench match-controls` and `aou-workbench characterize-cohort` first."
+        )
+
+    outcome = pd.to_numeric(sample[outcome_column], errors="coerce")
+    tier = sample["case_tier"].astype("string").str.lower()
+
+    if "broad_rhabdo_case" in sample.columns:
+        broad_case = _flag_mask(sample, "broad_rhabdo_case")
+    else:
+        broad_case = tier.isin({"broad", "definite"})
+
+    case_mask = outcome.eq(1) & broad_case
+    control_mask = outcome.eq(0) & tier.eq("control") & _flag_mask(sample, "eligible_control")
+    return case_mask | control_mask
+
+
 def _hail_sample_frame(
     matched_df: pd.DataFrame,
     config: ProjectConfig,
@@ -211,6 +241,12 @@ def _hail_pilot_sample_frame(
         sample = sample[eligibility == 1].copy()
     counts["after_eligibility_participants"] = int(sample["person_id"].nunique())
 
+    sample = sample[_pilot_case_control_definition_mask(sample, outcome_column)].copy()
+    outcome_after_definition = pd.to_numeric(sample[outcome_column], errors="coerce")
+    counts["after_case_control_definition_participants"] = int(sample["person_id"].nunique())
+    counts["after_case_control_definition_cases"] = int(outcome_after_definition.eq(1).sum())
+    counts["after_case_control_definition_controls"] = int(outcome_after_definition.eq(0).sum())
+
     wgs_manifest_used = False
     if has_wgs_manifest(config):
         sample = restrict_frame_to_ids(sample, wgs_present_ids(config, require=True), id_column="person_id")
@@ -236,6 +272,9 @@ def _hail_pilot_sample_frame(
     complete = complete.dropna(subset=[outcome_column, *hail_covariates]).copy()
     complete["s"] = complete["person_id"].astype(str)
     counts["after_complete_case_participants"] = int(complete["person_id"].nunique())
+    outcome_complete = pd.to_numeric(complete[outcome_column], errors="coerce")
+    counts["after_complete_case_cases"] = int(outcome_complete.eq(1).sum())
+    counts["after_complete_case_controls"] = int(outcome_complete.eq(0).sum())
     return complete, hail_covariates, raw_covariates, dropped_covariates, counts, wgs_manifest_used
 
 
@@ -390,10 +429,16 @@ def _postprocess_pilot_results(
         title="Stage 4: Hail Pilot GWAS",
         summary_lines=[
             f"- Pilot label: {label}",
+            "- Case-control definition: broad rhabdomyolysis cases versus matched eligible controls",
             f"- Analysis split: {analysis_split}",
             f"- Eligibility flag: {eligibility_flag}",
             f"- Chromosomes: {', '.join(chromosomes)}",
             f"- Complete-case samples analyzed: {sample_counts.get('after_complete_case_participants', 0)}",
+            (
+                "- Complete-case cases/controls: "
+                f"{sample_counts.get('after_complete_case_cases', 0)} / "
+                f"{sample_counts.get('after_complete_case_controls', 0)}"
+            ),
             f"- MatrixTable samples analyzed: {sample_counts.get('matrix_table_participants', 0)}",
             f"- Variants tested after QC: {full.shape[0]}",
             f"- Lead hits: {lead_hits.shape[0]}",

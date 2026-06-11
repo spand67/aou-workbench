@@ -105,7 +105,7 @@ aou-workbench run-hail-pilot-gwas \
   --label acaf_chr22_maf05_train_qc
 ```
 
-This uses the AoU ACAF threshold split MatrixTable, not the full variant database. It restricts to the training split and primary model-eligible rows, then computes variant QC inside that analysis sample before association testing. The pilot keeps autosomal biallelic SNPs with MAF >= 0.05, minor allele count >= 20, call rate >= 0.98, and control-only Hardy-Weinberg equilibrium p >= 1e-6. Outputs are isolated under `stage4/hail_pilot/<label>/` and include GWAS results, lead hits, QC JSON, sequential variant QC counts, Manhattan and QQ plots, and a markdown report.
+This uses the AoU ACAF threshold split MatrixTable, not the full variant database. The primary pilot phenotype is broad rhabdomyolysis cases versus matched eligible controls, restricted to the training split and `primary_model_eligible` rows so the test split remains untouched for later PRS/model evaluation. Covariates are `age_at_index`, `is_female`, and PC1-PC5; observation depth, condition-record depth, sepsis, renal injury, and crush injury are not GWAS covariates. The pilot computes variant QC inside the analysis sample and keeps autosomal biallelic SNPs with MAF >= 0.05, minor allele count >= 20, call rate >= 0.98, and control-only Hardy-Weinberg equilibrium p >= 1e-6. Outputs are isolated under `stage4/hail_pilot/<label>/` and include GWAS results, lead hits, QC JSON, sequential variant QC counts, Manhattan and QQ plots, and a markdown report.
 
 Rebuild the cross-analysis dashboard and Markdown digest from existing outputs without rerunning queries or models:
 

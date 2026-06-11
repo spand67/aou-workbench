@@ -79,6 +79,15 @@ class Stage4HailGwasTests(unittest.TestCase):
         matched_df["analysis_split"] = "train"
         matched_df["primary_model_eligible"] = 1
 
+        bad_case = matched_df[matched_df["analysis_case"] == 1].iloc[0].copy()
+        bad_case["person_id"] = "bad-broad-case"
+        bad_case["broad_rhabdo_case"] = 0
+        bad_control = matched_df[matched_df["analysis_case"] == 0].iloc[0].copy()
+        bad_control["person_id"] = "bad-control"
+        bad_control["case_tier"] = "indeterminate_ck_only"
+        bad_control["eligible_control"] = 0
+        matched_df = pd.concat([matched_df, pd.DataFrame([bad_case, bad_control])], ignore_index=True)
+
         test_person = str(matched_df.loc[matched_df.index[0], "person_id"])
         ineligible_person = str(matched_df.loc[matched_df.index[1], "person_id"])
         incomplete_person = str(matched_df.loc[matched_df.index[2], "person_id"])
@@ -94,11 +103,21 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertNotIn(test_person, observed)
         self.assertNotIn(ineligible_person, observed)
         self.assertNotIn(incomplete_person, observed)
+        self.assertNotIn("bad-broad-case", observed)
+        self.assertNotIn("bad-control", observed)
         self.assertIn("pc1", hail_covariates)
         self.assertEqual(raw_covariates, ["age_at_index", "is_female", "pc1", "pc2", "pc3", "pc4", "pc5"])
+        self.assertNotIn("observation_days", raw_covariates)
+        self.assertNotIn("omop_condition_record_dates", raw_covariates)
+        self.assertNotIn("sepsis", raw_covariates)
+        self.assertNotIn("renal_injury", raw_covariates)
+        self.assertNotIn("crush_injury", raw_covariates)
         self.assertIsInstance(dropped_covariates, list)
         self.assertTrue(wgs_manifest_used)
+        self.assertLess(counts["after_case_control_definition_participants"], counts["after_eligibility_participants"])
         self.assertLess(counts["after_complete_case_participants"], counts["matched_input_participants"])
+        self.assertGreater(counts["after_complete_case_cases"], 0)
+        self.assertGreater(counts["after_complete_case_controls"], 0)
 
     def test_hail_pilot_paths_are_labeled_and_do_not_overwrite_stage4(self) -> None:
         paths = build_demo_project_tree()
