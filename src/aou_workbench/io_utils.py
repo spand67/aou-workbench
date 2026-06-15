@@ -50,14 +50,39 @@ def is_bigquery_table(path: str) -> bool:
     return bool(re.fullmatch(r"[^./`]+[.][^./`]+[.][^./`]+", normalized))
 
 
-def query_bigquery_dataframe(sql: str) -> pd.DataFrame:
+def query_bigquery_dataframe(sql: str, *, maximum_bytes_billed: int | None = None) -> pd.DataFrame:
     try:
         from google.cloud import bigquery  # type: ignore
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise RuntimeError("google-cloud-bigquery is required for BigQuery-backed inputs.") from exc
     client = bigquery.Client()
-    rows = [dict(row.items()) for row in client.query(sql).result()]
+    job_config = None
+    if maximum_bytes_billed is not None:
+        job_config = bigquery.QueryJobConfig(maximum_bytes_billed=maximum_bytes_billed)
+    rows = [dict(row.items()) for row in client.query(sql, job_config=job_config).result()]
     return pd.DataFrame(rows)
+
+
+def dry_run_bigquery_query(sql: str, *, maximum_bytes_billed: int | None = None) -> dict[str, Any]:
+    try:
+        from google.cloud import bigquery  # type: ignore
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError("google-cloud-bigquery is required for BigQuery-backed inputs.") from exc
+    client = bigquery.Client()
+    job_config = bigquery.QueryJobConfig(
+        dry_run=True,
+        use_query_cache=False,
+    )
+    job = client.query(sql, job_config=job_config)
+    total_bytes = int(job.total_bytes_processed or 0)
+    return {
+        "total_bytes_processed": total_bytes,
+        "total_tib_processed": total_bytes / float(1024**4),
+        "maximum_bytes_billed": maximum_bytes_billed,
+        "would_exceed_maximum_bytes_billed": (
+            maximum_bytes_billed is not None and total_bytes > maximum_bytes_billed
+        ),
+    }
 
 
 def _gsutil_cat(path: str) -> str:
@@ -154,6 +179,7 @@ __all__ = [
     "is_bigquery_table",
     "load_yaml",
     "parse_date",
+    "dry_run_bigquery_query",
     "query_bigquery_dataframe",
     "read_table",
     "slugify",

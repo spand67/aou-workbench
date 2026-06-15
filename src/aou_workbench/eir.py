@@ -56,7 +56,7 @@ from .cohort_summary import (
     _stable_hash_score,
 )
 from .config import CaseTierRule, ClinicalCofactorRule, ProjectConfig
-from .io_utils import parse_date, query_bigquery_dataframe, read_table, write_dataframe, write_json, write_text
+from .io_utils import dry_run_bigquery_query, parse_date, query_bigquery_dataframe, read_table, write_dataframe, write_json, write_text
 from .paths import ProjectPaths, build_output_paths, join_path
 from .phenotype_sql import _escape_term, _match_predicate, _qualify_table
 from .preflight import apply_runtime_defaults
@@ -72,6 +72,8 @@ SUPPORTIVE_EIR_START_DAYS = -30
 SUPPORTIVE_EIR_END_DAYS = 7
 TRAIN_FRACTION = 0.8
 CV_FOLDS = 5
+BYTES_PER_TIB = 1024**4
+BIGQUERY_ON_DEMAND_USD_PER_TIB = 6.25
 
 OUTCOME_COLUMN = "eir_primary_case"
 TRAUMA_COFACTORS = ("crush_injury", "major_trauma")
@@ -884,7 +886,25 @@ def _lab_measurement_predicate(config: ProjectConfig, lab: str) -> str:
     )
 
 
-def _build_eir_cohort_bigquery_aggregated(config: ProjectConfig) -> pd.DataFrame:
+def _bytes_from_tib(value: float | None) -> int | None:
+    if value is None:
+        return None
+    if value <= 0:
+        raise ValueError("--max-tib must be greater than 0.")
+    return int(float(value) * BYTES_PER_TIB)
+
+
+def _estimate_bigquery_cost_usd(total_bytes_processed: int) -> float:
+    return total_bytes_processed / float(BYTES_PER_TIB) * BIGQUERY_ON_DEMAND_USD_PER_TIB
+
+
+def _build_eir_cohort_bigquery_aggregated(
+    config: ProjectConfig,
+    *,
+    maximum_bytes_billed: int | None = None,
+    dry_run: bool = False,
+    write_sql_path: str | None = None,
+) -> pd.DataFrame | dict[str, Any]:
     cdr = config.workbench.workspace_cdr or "{{workspace_cdr}}"
     person_table = _qualify_table(cdr, config.phenotype.tables.person_table)
     observation_table = _qualify_table(cdr, config.phenotype.tables.observation_table)
@@ -1241,7 +1261,23 @@ SELECT
   ) AS case_control_eligible
 FROM finalized
 """.strip()
-    frame = query_bigquery_dataframe(sql)
+    if write_sql_path:
+        write_text(sql, write_sql_path)
+    if dry_run:
+        estimate = dry_run_bigquery_query(sql, maximum_bytes_billed=maximum_bytes_billed)
+        total_bytes = int(estimate.get("total_bytes_processed", 0))
+        estimate.update(
+            {
+                "workflow": "eir_clinical_v1",
+                "mode": "bigquery",
+                "sql_path": write_sql_path,
+                "estimated_query_cost_usd": _estimate_bigquery_cost_usd(total_bytes),
+                "on_demand_usd_per_tib": BIGQUERY_ON_DEMAND_USD_PER_TIB,
+            }
+        )
+        return estimate
+
+    frame = query_bigquery_dataframe(sql, maximum_bytes_billed=maximum_bytes_billed)
     date_columns = [
         "obs_start_date",
         "obs_end_date",
@@ -1299,14 +1335,58 @@ FROM finalized
     return frame
 
 
-def build_eir_cohort(config: ProjectConfig) -> pd.DataFrame:
+def estimate_eir_cohort_bigquery(
+    config: ProjectConfig,
+    *,
+    max_tib: float | None = None,
+    write_sql_path: str | None = None,
+) -> dict[str, Any]:
+    """Dry-run the EIR BigQuery cohort build and return estimated scan/cost metadata."""
+
+    effective = _copy_with_eir_outcome(apply_runtime_defaults(config))
+    if effective.phenotype.tables.cohort_table:
+        return {
+            "workflow": "eir_clinical_v1",
+            "mode": "local",
+            "total_bytes_processed": 0,
+            "total_tib_processed": 0.0,
+            "maximum_bytes_billed": _bytes_from_tib(max_tib),
+            "would_exceed_maximum_bytes_billed": False,
+            "estimated_query_cost_usd": 0.0,
+            "on_demand_usd_per_tib": BIGQUERY_ON_DEMAND_USD_PER_TIB,
+            "sql_path": None,
+            "message": "Local cohort tables are configured; BigQuery dry-run is not needed.",
+        }
+    estimate = _build_eir_cohort_bigquery_aggregated(
+        effective,
+        maximum_bytes_billed=_bytes_from_tib(max_tib),
+        dry_run=True,
+        write_sql_path=write_sql_path,
+    )
+    if not isinstance(estimate, dict):  # pragma: no cover - defensive
+        raise RuntimeError("Expected BigQuery dry-run metadata, got a cohort table.")
+    return estimate
+
+
+def build_eir_cohort(
+    config: ProjectConfig,
+    *,
+    max_tib: float | None = None,
+    write_sql_path: str | None = None,
+) -> pd.DataFrame:
     """Build the incident EIR-enriched cohort with auditable phenotype flags."""
 
     effective = _copy_with_eir_outcome(apply_runtime_defaults(config))
     local_mode = bool(effective.phenotype.tables.cohort_table)
     if not local_mode:
         print("Building EIR cohort with participant-level BigQuery aggregation...", flush=True)
-        cohort = _build_eir_cohort_bigquery_aggregated(effective)
+        cohort = _build_eir_cohort_bigquery_aggregated(
+            effective,
+            maximum_bytes_billed=_bytes_from_tib(max_tib),
+            write_sql_path=write_sql_path,
+        )
+        if not isinstance(cohort, pd.DataFrame):  # pragma: no cover - defensive
+            raise RuntimeError("Expected EIR BigQuery cohort table, got dry-run metadata.")
         print(f"BigQuery aggregation returned {len(cohort)} participant rows.", flush=True)
         return cohort.sort_values("person_id").reset_index(drop=True)
 
@@ -1738,10 +1818,27 @@ def characterize_eir_cohort(config: ProjectConfig, cohort: pd.DataFrame, paths: 
     }
 
 
-def build_eir_cohort_artifacts(config: ProjectConfig) -> tuple[ProjectConfig, ProjectPaths, pd.DataFrame]:
+def estimate_eir_cohort_artifacts(
+    config: ProjectConfig,
+    *,
+    max_tib: float | None = None,
+    write_sql_path: str | None = None,
+) -> tuple[ProjectConfig, ProjectPaths, dict[str, Any]]:
     effective = _copy_with_eir_outcome(apply_runtime_defaults(config))
     paths = build_output_paths(effective)
-    cohort = build_eir_cohort(effective)
+    estimate = estimate_eir_cohort_bigquery(effective, max_tib=max_tib, write_sql_path=write_sql_path)
+    return effective, paths, estimate
+
+
+def build_eir_cohort_artifacts(
+    config: ProjectConfig,
+    *,
+    max_tib: float | None = None,
+    write_sql_path: str | None = None,
+) -> tuple[ProjectConfig, ProjectPaths, pd.DataFrame]:
+    effective = _copy_with_eir_outcome(apply_runtime_defaults(config))
+    paths = build_output_paths(effective)
+    cohort = build_eir_cohort(effective, max_tib=max_tib, write_sql_path=write_sql_path)
     write_dataframe(cohort, paths.built_cohort_tsv)
     write_json(
         {
@@ -2113,6 +2210,8 @@ __all__ = [
     "build_eir_cohort_artifacts",
     "characterize_eir_artifacts",
     "characterize_eir_cohort",
+    "estimate_eir_cohort_artifacts",
+    "estimate_eir_cohort_bigquery",
     "eir_characterization_report_path",
     "eir_consort_counts_path",
     "eir_consort_counts_report_path",

@@ -61,6 +61,7 @@ from .cohort_summary import (
 from .eir import (
     build_eir_cohort_artifacts,
     characterize_eir_artifacts,
+    estimate_eir_cohort_artifacts,
     eir_characterization_report_path,
     eir_consort_counts_path,
     eir_missingness_path,
@@ -291,6 +292,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Build the incident CK-confirmed, non-traumatic/non-septic EIR-enriched cohort.",
     )
     _add_eir_config_arguments(eir_build_parser)
+    eir_build_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Estimate the BigQuery bytes scanned and optional billing cap without executing the cohort query.",
+    )
+    eir_build_parser.add_argument(
+        "--max-tib",
+        type=float,
+        default=None,
+        help="Optional BigQuery maximum bytes billed cap in TiB. The query fails before billing if the estimate is higher.",
+    )
+    eir_build_parser.add_argument(
+        "--write-sql",
+        default=None,
+        help="Optional local path to write the rendered BigQuery SQL for review.",
+    )
 
     eir_characterize_parser = subparsers.add_parser(
         "characterize-eir-cohort",
@@ -801,7 +818,37 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "build-eir-cohort":
-        _, paths, cohort_df = build_eir_cohort_artifacts(config)
+        if args.dry_run:
+            _, _, estimate = estimate_eir_cohort_artifacts(
+                config,
+                max_tib=args.max_tib,
+                write_sql_path=args.write_sql,
+            )
+            total_bytes = int(estimate.get("total_bytes_processed", 0))
+            total_tib = float(estimate.get("total_tib_processed", 0.0))
+            estimated_cost = float(estimate.get("estimated_query_cost_usd", 0.0))
+            max_bytes = estimate.get("maximum_bytes_billed")
+            print("EIR cohort BigQuery dry run")
+            print(f"Mode: {estimate.get('mode', 'unknown')}")
+            print(f"Estimated bytes processed: {total_bytes}")
+            print(f"Estimated TiB processed: {total_tib:.4f}")
+            print(f"Approx on-demand query cost: ${estimated_cost:.2f}")
+            if max_bytes is not None:
+                print(f"Maximum bytes billed cap: {int(max_bytes)} ({int(max_bytes) / float(1024**4):.4f} TiB)")
+                if estimate.get("would_exceed_maximum_bytes_billed"):
+                    print("Cap status: estimated bytes exceed this cap; the real query would be refused before billing.")
+                else:
+                    print("Cap status: estimated bytes are within this cap.")
+            if estimate.get("sql_path"):
+                print(f"SQL path: {estimate['sql_path']}")
+            if estimate.get("message"):
+                print(str(estimate["message"]))
+            return 0
+        _, paths, cohort_df = build_eir_cohort_artifacts(
+            config,
+            max_tib=args.max_tib,
+            write_sql_path=args.write_sql,
+        )
         print(f"EIR cohort rows: {len(cohort_df)}")
         print(f"Primary EIR-enriched cases: {int(cohort_df['eir_primary_case'].sum())}")
         print(f"Eligible controls: {int(cohort_df['eligible_control'].sum())}")

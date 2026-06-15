@@ -19,6 +19,7 @@ from aou_workbench.eir import (
     build_eir_cohort,
     build_eir_cohort_artifacts,
     characterize_eir_artifacts,
+    estimate_eir_cohort_artifacts,
     eir_consort_counts_path,
     eir_missingness_path,
     eir_model_input_path,
@@ -290,13 +291,25 @@ class EIRPhenotypeTests(unittest.TestCase):
 
     def test_cli_help_includes_eir_commands(self) -> None:
         parser = _build_parser()
-        parsed = parser.parse_args(["build-eir-cohort"])
+        parsed = parser.parse_args(["build-eir-cohort", "--dry-run", "--max-tib", "0.5", "--write-sql", "eir.sql"])
         self.assertEqual(parsed.command, "build-eir-cohort")
+        self.assertTrue(parsed.dry_run)
+        self.assertEqual(parsed.max_tib, 0.5)
+        self.assertEqual(parsed.write_sql, "eir.sql")
         parsed = parser.parse_args(["characterize-eir-cohort"])
         self.assertEqual(parsed.command, "characterize-eir-cohort")
         parsed = parser.parse_args(["run-eir-clinical-model", "--run-sparse"])
         self.assertEqual(parsed.command, "run-eir-clinical-model")
         self.assertTrue(parsed.run_sparse)
+
+    def test_eir_dry_run_noops_for_local_tables(self) -> None:
+        _, config = _config()
+        _, _, estimate = estimate_eir_cohort_artifacts(config, max_tib=0.5)
+
+        self.assertEqual(estimate["mode"], "local")
+        self.assertEqual(estimate["total_bytes_processed"], 0)
+        self.assertEqual(estimate["estimated_query_cost_usd"], 0.0)
+        self.assertEqual(estimate["maximum_bytes_billed"], int(0.5 * 1024**4))
 
 
 if __name__ == "__main__":
