@@ -58,6 +58,20 @@ from .cohort_summary import (
     split_table1_path,
     summarize_clinical_demographics,
 )
+from .eir import (
+    build_eir_cohort_artifacts,
+    characterize_eir_artifacts,
+    eir_characterization_report_path,
+    eir_consort_counts_path,
+    eir_missingness_path,
+    eir_model_input_path,
+    eir_risk_decile_path,
+    eir_sparse_report_path,
+    eir_sparse_status_path,
+    eir_split_summary_path,
+    eir_table1_path,
+    run_eir_clinical_model,
+)
 from .gwas_workflow import prepare_terminal_gwas_workspace
 from .io_utils import read_table
 from .microarray_plink_gwas import (
@@ -148,6 +162,14 @@ def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cohort-config", default=project_path("configs", "rhabdo", "cohort.yaml"))
     parser.add_argument("--panel-config", default=project_path("configs", "rhabdo", "panel.yaml"))
     parser.add_argument("--analysis-config", default=project_path("configs", "rhabdo", "analysis.yaml"))
+
+
+def _add_eir_config_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--workbench-config", default=project_path("configs", "workbench.yaml"))
+    parser.add_argument("--phenotype-config", default=project_path("configs", "eir", "phenotype.yaml"))
+    parser.add_argument("--cohort-config", default=project_path("configs", "eir", "cohort.yaml"))
+    parser.add_argument("--panel-config", default=project_path("configs", "eir", "panel.yaml"))
+    parser.add_argument("--analysis-config", default=project_path("configs", "eir", "analysis.yaml"))
 
 
 def _load_config(args: argparse.Namespace):
@@ -263,6 +285,35 @@ def _build_parser() -> argparse.ArgumentParser:
     match_parser = subparsers.add_parser("match-controls", help="Build the matched case-control cohort.")
     _add_config_arguments(match_parser)
     match_parser.add_argument("--require-wgs", action="store_true", help="Restrict the cohort and matching universe to participants with CDR WGS availability.")
+
+    eir_build_parser = subparsers.add_parser(
+        "build-eir-cohort",
+        help="Build the incident CK-confirmed, non-traumatic/non-septic EIR-enriched cohort.",
+    )
+    _add_eir_config_arguments(eir_build_parser)
+
+    eir_characterize_parser = subparsers.add_parser(
+        "characterize-eir-cohort",
+        help="Write EIR-enriched CONSORT counts, train/test splits, Table 1, and missingness reports.",
+    )
+    _add_eir_config_arguments(eir_characterize_parser)
+
+    eir_model_parser = subparsers.add_parser(
+        "run-eir-clinical-model",
+        help="Train and evaluate the leakage-controlled clinical-only EIR-enriched incident prediction model.",
+    )
+    _add_eir_config_arguments(eir_model_parser)
+    eir_model_parser.add_argument(
+        "--l2-penalty",
+        type=float,
+        default=1.0,
+        help="L2 penalty for regularized logistic regression. Default: 1.0.",
+    )
+    eir_model_parser.add_argument(
+        "--run-sparse",
+        action="store_true",
+        help="Request the optional sparse OMOP model. The v1 command records a clear skipped status if unavailable.",
+    )
 
     wgs_manifest_parser = subparsers.add_parser(
         "prepare-wgs-manifest",
@@ -747,6 +798,54 @@ def main(argv: list[str] | None = None) -> int:
         _, paths, matched_df = match_controls_artifacts(effective, cohort_df, require_wgs=args.require_wgs)
         print(f"Matched cohort rows: {len(matched_df)}")
         print(f"Matched cohort path: {paths.matched_cohort_tsv}")
+        return 0
+
+    if args.command == "build-eir-cohort":
+        _, paths, cohort_df = build_eir_cohort_artifacts(config)
+        print(f"EIR cohort rows: {len(cohort_df)}")
+        print(f"Primary EIR-enriched cases: {int(cohort_df['eir_primary_case'].sum())}")
+        print(f"Eligible controls: {int(cohort_df['eligible_control'].sum())}")
+        print(f"Cohort path: {paths.built_cohort_tsv}")
+        return 0
+
+    if args.command == "characterize-eir-cohort":
+        _, paths, outputs = characterize_eir_artifacts(config)
+        print(f"EIR CONSORT rows: {outputs['consort'].shape[0]}")
+        print(f"EIR model input rows: {outputs['model_input'].shape[0]}")
+        print(f"EIR Table 1 rows: {outputs['table1'].shape[0]}")
+        print(f"EIR missingness rows: {outputs['missingness'].shape[0]}")
+        print(f"consort: {eir_consort_counts_path(paths)}")
+        print(f"split_summary: {eir_split_summary_path(paths)}")
+        print(f"table1: {eir_table1_path(paths)}")
+        print(f"missingness: {eir_missingness_path(paths)}")
+        print(f"clinical_model_input: {eir_model_input_path(paths)}")
+        print(f"report: {eir_characterization_report_path(paths)}")
+        return 0
+
+    if args.command == "run-eir-clinical-model":
+        _, paths, _ = characterize_eir_artifacts(config)
+        outputs = run_eir_clinical_model(
+            config,
+            paths,
+            l2_penalty=args.l2_penalty,
+            run_sparse=args.run_sparse,
+        )
+        metrics = outputs["metrics"]
+        test_metrics = metrics[metrics["evaluation_set"] == "test"].iloc[0]
+        print(f"EIR clinical model test ROC AUC: {test_metrics['roc_auc']:.4f}")
+        print(f"EIR clinical model test average precision: {test_metrics['average_precision']:.4f}")
+        print(f"metrics: {clinical_model_metrics_path(paths)}")
+        print(f"cv_metrics: {clinical_model_cv_metrics_path(paths)}")
+        print(f"coefficients: {clinical_model_coefficients_path(paths)}")
+        print(f"predictions: {clinical_model_predictions_path(paths)}")
+        print(f"calibration: {clinical_model_calibration_path(paths)}")
+        print(f"report: {clinical_model_report_path(paths)}")
+        print(f"roc: {clinical_model_roc_svg_path(paths)}")
+        print(f"precision_recall: {clinical_model_pr_svg_path(paths)}")
+        print(f"calibration_plot: {clinical_model_calibration_svg_path(paths)}")
+        print(f"risk_deciles: {eir_risk_decile_path(paths)}")
+        print(f"sparse_status: {eir_sparse_status_path(paths)}")
+        print(f"sparse_report: {eir_sparse_report_path(paths)}")
         return 0
 
     if args.command == "prepare-wgs-manifest":

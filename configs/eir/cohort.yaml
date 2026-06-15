@@ -1,0 +1,21 @@
+control_ratio: 0
+minimum_controls: 0
+age_tolerance_years: 5
+index_window_days: 730
+exact_match_columns: []
+primary_case_tier: eir_primary
+sensitivity_case_tiers: [diagnosis_only]
+covariate_columns:
+  - age_at_baseline
+  - is_female
+  - prior_kidney_disease_or_aki
+  - remote_sepsis_history
+  - prior_heat_illness_or_dehydration
+  - prior_myopathy_muscle_disease
+  - prior_diabetes
+  - prior_thyroid_disease
+  - prior_liver_disease
+  - prior_alcohol_substance_condition
+  - prior_injury_trauma_history
+require_complete_matches: false
+allow_reuse_controls: false

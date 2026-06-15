@@ -1,0 +1,11 @@
+analysis_name: eir_clinical_v1
+output_dir: ./outputs
+matched_outcome_column: eir_primary_case
+run_stage1: false
+run_stage2: false
+run_stage3: false
+run_stage4: false
+reporting:
+  include_all_by_all_comparison: false
+  all_by_all_table:
+  top_n: 10

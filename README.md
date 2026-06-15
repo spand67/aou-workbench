@@ -91,6 +91,16 @@ aou-workbench run-clinical-model
 
 This trains an L2-regularized logistic model on the primary non-traumatic training set and evaluates it once on the held-out test set. The model uses a deliberately simple baseline feature set: age, sex category, and ancestry category. Observation depth, condition-record depth, sepsis, and renal injury are retained for cohort characterization and sensitivity interpretation, but are not used as clinical model predictors. Metrics, coefficients, predictions, calibration, ROC, and precision-recall outputs are written under `clinical/model/`.
 
+Run the separate incident EIR-enriched clinical workflow:
+
+```bash
+aou-workbench build-eir-cohort
+aou-workbench characterize-eir-cohort
+aou-workbench run-eir-clinical-model
+```
+
+This workflow writes to `outputs/eir-clinical-v1/` by default and is separate from the broad rhabdomyolysis case-control/GWAS workflow. It defines baseline at the first qualifying clinical activity date after at least 365 days of observable lookback, requires at least two prior-or-baseline OMOP condition dates, and excludes participants with prior rhabdomyolysis or prior CK >=5000 before baseline. The primary outcome is CK-confirmed rhabdomyolysis in days 1-730 after baseline, excluding peri-index crush/major trauma `[-7,+7]` and pre/same-day sepsis `[-30,0]`. Controls require no rhabdomyolysis diagnosis and no CK >=5000 during the 2-year horizon, with sufficient observed follow-up. The model uses pre-baseline demographics, curated comorbidity/injury flags, and selected pre-baseline labs only; observation days, total condition-record count, post-baseline data, peri-index renal injury, and peri-index sepsis are not predictors. Outputs include CONSORT counts, train/test split summary, Table 1 by split and case/control, missingness, model metrics, predictions, coefficients, CV metrics, ROC, PR, calibration, risk-decile plots, and a sparse-OMOP-model status note.
+
 Run the first reduced-marker Hail GWAS pilot:
 
 ```bash

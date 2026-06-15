@@ -1,0 +1,17 @@
+genes_of_interest:
+  - RYR1
+  - CPT2
+  - PYGM
+  - LPIN1
+  - CACNA1S
+  - AMPD1
+  - CKM
+burden_target_genes:
+  - RYR1
+  - CPT2
+  - PYGM
+  - LPIN1
+  - CACNA1S
+  - AMPD1
+  - CKM
+a_priori_variants: []
