@@ -29,7 +29,7 @@ from .eir import (
     _lab_measurement_predicate,
     build_eir_cohort,
 )
-from .io_utils import dry_run_bigquery_query, query_bigquery_dataframe, write_dataframe, write_json, write_text
+from .io_utils import dry_run_bigquery_query, query_bigquery_dataframe, read_table, write_dataframe, write_json, write_text
 from .paths import ProjectPaths, build_output_paths, join_path
 from .phenotype_sql import _match_predicate, _qualify_table
 from .preflight import apply_runtime_defaults
@@ -348,76 +348,68 @@ def render_incident_feasibility_sql(config: ProjectConfig) -> str:
     base = _feasibility_base_sql(config)
     return f"""
 {base}
-SELECT 'case_funnel' AS section, 'All participants' AS metric, COUNT(*) AS n
-FROM feasibility
+,
+summary AS (
+  SELECT
+    COUNT(*) AS all_participants,
+    COUNTIF(has_rhabdo_ever = 1) AS any_rhabdo_ever,
+    COUNTIF(first_rhabdo_date IS NOT NULL) AS first_rhabdo_after_baseline_2y,
+    COUNTIF(first_rhabdo_date IS NOT NULL AND eligible_ehr_denominator = 1) AS incident_rhabdo_with_baseline_history,
+    COUNTIF(incident_rhabdo_case = 1) AS incident_rhabdo_no_prior_rhabdo_or_high_ck,
+    COUNTIF(incident_nontrauma_rhabdo_case = 1) AS nontrauma_incident_cases,
+    COUNTIF(ck_confirmed_nontrauma_case = 1) AS ck_confirmed_nontrauma_cases,
+    COUNTIF(supportive_nontrauma_case = 1) AS supportive_nontrauma_cases,
+    COUNTIF(sepsis_flagged_nontrauma_case = 1) AS sepsis_flagged_nontrauma_cases,
+    COUNTIF(incident_denominator = 1) AS incident_denominator_n,
+    COUNTIF(incident_denominator = 1 AND rhabdo_during_horizon = 0) AS no_rhabdo_during_horizon,
+    COUNTIF(incident_denominator = 1 AND rhabdo_during_horizon = 0 AND high_ck_during_horizon = 0) AS no_rhabdo_or_high_ck_during_horizon,
+    COUNTIF(incident_denominator = 1 AND observed_followup_through_horizon = 1) AS observed_through_horizon,
+    COUNTIF(eligible_control = 1) AS eligible_controls,
+    COUNTIF(ck_tested_control = 1) AS ck_tested_controls,
+    COUNTIF(incident_nontrauma_rhabdo_case = 1 OR eligible_control = 1) AS case_control_rows
+  FROM feasibility
+),
+baseline_history_bins AS (
+  SELECT
+    CASE
+      WHEN DATE_DIFF(first_rhabdo_ever_date, obs_start_date, DAY) < 365 THEN '<365d before first rhabdo'
+      WHEN DATE_DIFF(first_rhabdo_ever_date, obs_start_date, DAY) < 730 THEN '365-729d before first rhabdo'
+      WHEN DATE_DIFF(first_rhabdo_ever_date, obs_start_date, DAY) < 1095 THEN '730-1094d before first rhabdo'
+      ELSE '>=1095d before first rhabdo'
+    END AS metric,
+    COUNT(*) AS n
+  FROM feasibility
+  WHERE has_rhabdo_ever = 1
+    AND first_rhabdo_ever_date IS NOT NULL
+    AND obs_start_date IS NOT NULL
+  GROUP BY metric
+)
+SELECT row.section, row.metric, row.n
+FROM summary,
+UNNEST([
+  STRUCT('case_funnel' AS section, 'All participants' AS metric, all_participants AS n),
+  STRUCT('case_funnel', 'Any rhabdo ever', any_rhabdo_ever),
+  STRUCT('case_funnel', 'First rhabdo after baseline within 2 years', first_rhabdo_after_baseline_2y),
+  STRUCT('case_funnel', 'Incident rhabdo with 365d lookback and >=2 condition dates', incident_rhabdo_with_baseline_history),
+  STRUCT('case_funnel', 'Incident rhabdo with no prior rhabdo or CK >=5000', incident_rhabdo_no_prior_rhabdo_or_high_ck),
+  STRUCT('case_funnel', 'Non-trauma incident rhabdo cases', nontrauma_incident_cases),
+  STRUCT('case_funnel', 'CK-confirmed non-trauma incident rhabdo cases', ck_confirmed_nontrauma_cases),
+  STRUCT('case_funnel', 'Exertion/heat/dehydration-coded non-trauma cases', supportive_nontrauma_cases),
+  STRUCT('case_funnel', 'Peri-index sepsis-flagged non-trauma cases', sepsis_flagged_nontrauma_cases),
+  STRUCT('control_funnel', 'Incident denominator', incident_denominator_n),
+  STRUCT('control_funnel', 'No rhabdo during 2-year horizon', no_rhabdo_during_horizon),
+  STRUCT('control_funnel', 'No rhabdo and no CK >=5000 during horizon', no_rhabdo_or_high_ck_during_horizon),
+  STRUCT('control_funnel', 'Observed through 2-year horizon', observed_through_horizon),
+  STRUCT('control_funnel', 'Eligible controls', eligible_controls),
+  STRUCT('control_funnel', 'CK-tested eligible controls', ck_tested_controls),
+  STRUCT('feasibility_counts', 'Primary non-trauma incident cases', nontrauma_incident_cases),
+  STRUCT('feasibility_counts', 'CK-confirmed non-trauma cases', ck_confirmed_nontrauma_cases),
+  STRUCT('feasibility_counts', 'Eligible controls', eligible_controls),
+  STRUCT('feasibility_counts', 'Case-control rows', case_control_rows)
+]) AS row
 UNION ALL
-SELECT 'case_funnel', 'Any rhabdo ever', COUNTIF(has_rhabdo_ever = 1)
-FROM feasibility
-UNION ALL
-SELECT 'case_funnel', 'First rhabdo after baseline within 2 years', COUNTIF(first_rhabdo_date IS NOT NULL)
-FROM feasibility
-UNION ALL
-SELECT 'case_funnel', 'Incident rhabdo with 365d lookback and >=2 condition dates', COUNTIF(first_rhabdo_date IS NOT NULL AND eligible_ehr_denominator = 1)
-FROM feasibility
-UNION ALL
-SELECT 'case_funnel', 'Incident rhabdo with no prior rhabdo or CK >=5000', COUNTIF(incident_rhabdo_case = 1)
-FROM feasibility
-UNION ALL
-SELECT 'case_funnel', 'Non-trauma incident rhabdo cases', COUNTIF(incident_nontrauma_rhabdo_case = 1)
-FROM feasibility
-UNION ALL
-SELECT 'case_funnel', 'CK-confirmed non-trauma incident rhabdo cases', COUNTIF(ck_confirmed_nontrauma_case = 1)
-FROM feasibility
-UNION ALL
-SELECT 'case_funnel', 'Exertion/heat/dehydration-coded non-trauma cases', COUNTIF(supportive_nontrauma_case = 1)
-FROM feasibility
-UNION ALL
-SELECT 'case_funnel', 'Peri-index sepsis-flagged non-trauma cases', COUNTIF(sepsis_flagged_nontrauma_case = 1)
-FROM feasibility
-UNION ALL
-SELECT 'control_funnel', 'Incident denominator', COUNTIF(incident_denominator = 1)
-FROM feasibility
-UNION ALL
-SELECT 'control_funnel', 'No rhabdo during 2-year horizon', COUNTIF(incident_denominator = 1 AND rhabdo_during_horizon = 0)
-FROM feasibility
-UNION ALL
-SELECT 'control_funnel', 'No rhabdo and no CK >=5000 during horizon', COUNTIF(incident_denominator = 1 AND rhabdo_during_horizon = 0 AND high_ck_during_horizon = 0)
-FROM feasibility
-UNION ALL
-SELECT 'control_funnel', 'Observed through 2-year horizon', COUNTIF(incident_denominator = 1 AND observed_followup_through_horizon = 1)
-FROM feasibility
-UNION ALL
-SELECT 'control_funnel', 'Eligible controls', COUNTIF(eligible_control = 1)
-FROM feasibility
-UNION ALL
-SELECT 'control_funnel', 'CK-tested eligible controls', COUNTIF(ck_tested_control = 1)
-FROM feasibility
-UNION ALL
-SELECT 'feasibility_counts', 'Primary non-trauma incident cases', COUNTIF(incident_nontrauma_rhabdo_case = 1)
-FROM feasibility
-UNION ALL
-SELECT 'feasibility_counts', 'CK-confirmed non-trauma cases', COUNTIF(ck_confirmed_nontrauma_case = 1)
-FROM feasibility
-UNION ALL
-SELECT 'feasibility_counts', 'Eligible controls', COUNTIF(eligible_control = 1)
-FROM feasibility
-UNION ALL
-SELECT 'feasibility_counts', 'Case-control rows', COUNTIF(incident_nontrauma_rhabdo_case = 1 OR eligible_control = 1)
-FROM feasibility
-UNION ALL
-SELECT
-  'baseline_history_bins',
-  CASE
-    WHEN first_rhabdo_ever_date IS NULL OR obs_start_date IS NULL THEN 'No rhabdo or no observation start'
-    WHEN DATE_DIFF(first_rhabdo_ever_date, obs_start_date, DAY) < 365 THEN '<365d before first rhabdo'
-    WHEN DATE_DIFF(first_rhabdo_ever_date, obs_start_date, DAY) < 730 THEN '365-729d before first rhabdo'
-    WHEN DATE_DIFF(first_rhabdo_ever_date, obs_start_date, DAY) < 1095 THEN '730-1094d before first rhabdo'
-    ELSE '>=1095d before first rhabdo'
-  END AS metric,
-  COUNTIF(has_rhabdo_ever = 1) AS n
-FROM feasibility
-WHERE has_rhabdo_ever = 1
-GROUP BY metric
+SELECT 'baseline_history_bins' AS section, metric, n
+FROM baseline_history_bins
 ORDER BY section, metric
 """.strip()
 
@@ -563,6 +555,44 @@ def _counts_from_local_cohort(cohort: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["section", "metric", "n"])
 
 
+def _local_microarray_counts(cohort: pd.DataFrame, fam_path: str) -> pd.DataFrame:
+    flags = cohort.copy()
+    flags["incident_nontrauma_rhabdo_case"] = (
+        _numeric_column(flags, "incident_denominator").eq(1)
+        & pd.to_datetime(flags["first_rhabdo_date"], errors="coerce").notna()
+        & _numeric_column(flags, "excluded_periindex_trauma").eq(0)
+    ).astype(int)
+    flags["ck_confirmed_nontrauma_case"] = (
+        _numeric_column(flags, "incident_nontrauma_rhabdo_case").eq(1)
+        & _numeric_column(flags, "ck_confirmed_index").eq(1)
+    ).astype(int)
+    flags["supportive_nontrauma_case"] = (
+        _numeric_column(flags, "incident_nontrauma_rhabdo_case").eq(1)
+        & _numeric_column(flags, "supportive_exertion_heat_dehydration_code").eq(1)
+    ).astype(int)
+    sepsis_column = "periindex_sepsis_flag" if "periindex_sepsis_flag" in flags.columns else "excluded_pre_or_same_day_sepsis"
+    flags["sepsis_flagged_nontrauma_case"] = (
+        _numeric_column(flags, "incident_nontrauma_rhabdo_case").eq(1)
+        & _numeric_column(flags, sepsis_column).eq(1)
+    ).astype(int)
+    ck_tested_column = "eir_ck_tested_control" if "eir_ck_tested_control" in flags.columns else "ck_tested_control"
+    flags["ck_tested_control"] = _numeric_column(flags, ck_tested_column).astype(int)
+    return _microarray_overlap_counts(
+        flags[
+            [
+                "person_id",
+                "incident_nontrauma_rhabdo_case",
+                "ck_confirmed_nontrauma_case",
+                "supportive_nontrauma_case",
+                "sepsis_flagged_nontrauma_case",
+                "eligible_control",
+                "ck_tested_control",
+            ]
+        ],
+        fam_path,
+    )
+
+
 def _write_outputs(paths: ProjectPaths, combined: pd.DataFrame, microarray: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
     outputs = {
         "feasibility_counts": _section(combined, "feasibility_counts"),
@@ -651,51 +681,35 @@ def run_incident_feasibility(
     max_tib: float | None = None,
     write_sql_path: str | None = None,
     microarray_fam: str | None = None,
+    from_cohort_tsv: str | None = None,
 ) -> tuple[ProjectConfig, ProjectPaths, dict[str, pd.DataFrame]]:
     effective = apply_runtime_defaults(_copy_with_incident_output(config))
     paths = build_output_paths(effective)
     maximum_bytes_billed = _bytes_from_tib(max_tib)
 
     microarray_counts: pd.DataFrame | None = None
+    if from_cohort_tsv:
+        cohort = read_table(from_cohort_tsv)
+        combined = _counts_from_local_cohort(cohort)
+        if microarray_fam:
+            microarray_counts = _local_microarray_counts(cohort, microarray_fam)
+        outputs = _write_outputs(paths, combined, microarray_counts)
+        write_json(
+            {
+                "workflow": INCIDENT_ANALYSIS_NAME,
+                "source": "cohort_tsv",
+                "cohort_tsv": from_cohort_tsv,
+                "microarray_fam": microarray_fam,
+            },
+            join_path(incident_feasibility_output_dir(paths), "feasibility_qc.json"),
+        )
+        return effective, paths, outputs
+
     if effective.phenotype.tables.cohort_table:
         cohort = build_eir_cohort(effective)
         combined = _counts_from_local_cohort(cohort)
         if microarray_fam:
-            flags = cohort.copy()
-            flags["incident_nontrauma_rhabdo_case"] = (
-                _numeric_column(flags, "incident_denominator").eq(1)
-                & pd.to_datetime(flags["first_rhabdo_date"], errors="coerce").notna()
-                & _numeric_column(flags, "excluded_periindex_trauma").eq(0)
-            ).astype(int)
-            flags["ck_confirmed_nontrauma_case"] = (
-                _numeric_column(flags, "incident_nontrauma_rhabdo_case").eq(1)
-                & _numeric_column(flags, "ck_confirmed_index").eq(1)
-            ).astype(int)
-            flags["supportive_nontrauma_case"] = (
-                _numeric_column(flags, "incident_nontrauma_rhabdo_case").eq(1)
-                & _numeric_column(flags, "supportive_exertion_heat_dehydration_code").eq(1)
-            ).astype(int)
-            sepsis_column = "periindex_sepsis_flag" if "periindex_sepsis_flag" in flags.columns else "excluded_pre_or_same_day_sepsis"
-            flags["sepsis_flagged_nontrauma_case"] = (
-                _numeric_column(flags, "incident_nontrauma_rhabdo_case").eq(1)
-                & _numeric_column(flags, sepsis_column).eq(1)
-            ).astype(int)
-            ck_tested_column = "eir_ck_tested_control" if "eir_ck_tested_control" in flags.columns else "ck_tested_control"
-            flags["ck_tested_control"] = _numeric_column(flags, ck_tested_column).astype(int)
-            microarray_counts = _microarray_overlap_counts(
-                flags[
-                    [
-                        "person_id",
-                        "incident_nontrauma_rhabdo_case",
-                        "ck_confirmed_nontrauma_case",
-                        "supportive_nontrauma_case",
-                        "sepsis_flagged_nontrauma_case",
-                        "eligible_control",
-                        "ck_tested_control",
-                    ]
-                ],
-                microarray_fam,
-            )
+            microarray_counts = _local_microarray_counts(cohort, microarray_fam)
         outputs = _write_outputs(paths, combined, microarray_counts)
         return effective, paths, outputs
 

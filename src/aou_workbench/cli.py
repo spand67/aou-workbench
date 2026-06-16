@@ -368,6 +368,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional local AoU microarray PLINK .fam path for case/control microarray overlap counts.",
     )
+    incident_feasibility_parser.add_argument(
+        "--from-cohort-tsv",
+        default=None,
+        help="Optional existing EIR built_cohort.tsv to summarize locally instead of running BigQuery.",
+    )
 
     wgs_manifest_parser = subparsers.add_parser(
         "prepare-wgs-manifest",
@@ -960,12 +965,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(str(estimate["message"]))
             if args.microarray_fam:
                 print("Microarray FAM overlap is skipped during dry-run.")
+            if args.from_cohort_tsv:
+                print("--from-cohort-tsv is ignored during dry-run.")
             return 0
         _, paths, outputs = run_incident_feasibility(
             config,
             max_tib=args.max_tib,
             write_sql_path=args.write_sql,
             microarray_fam=args.microarray_fam,
+            from_cohort_tsv=args.from_cohort_tsv,
         )
         print(f"Incident rhabdo feasibility rows: {outputs['feasibility_counts'].shape[0]}")
         print(f"feasibility_counts: {incident_feasibility_counts_path(paths)}")

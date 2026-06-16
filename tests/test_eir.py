@@ -312,11 +312,12 @@ class EIRPhenotypeTests(unittest.TestCase):
         parsed = parser.parse_args(["run-eir-clinical-model", "--run-sparse"])
         self.assertEqual(parsed.command, "run-eir-clinical-model")
         self.assertTrue(parsed.run_sparse)
-        parsed = parser.parse_args(["incident-rhabdo-feasibility", "--dry-run", "--max-tib", "0.5", "--microarray-fam", "arrays.fam"])
+        parsed = parser.parse_args(["incident-rhabdo-feasibility", "--dry-run", "--max-tib", "0.5", "--microarray-fam", "arrays.fam", "--from-cohort-tsv", "built.tsv"])
         self.assertEqual(parsed.command, "incident-rhabdo-feasibility")
         self.assertTrue(parsed.dry_run)
         self.assertEqual(parsed.max_tib, 0.5)
         self.assertEqual(parsed.microarray_fam, "arrays.fam")
+        self.assertEqual(parsed.from_cohort_tsv, "built.tsv")
 
     def test_eir_dry_run_noops_for_local_tables(self) -> None:
         _, config = _config()
@@ -402,6 +403,8 @@ class EIRPhenotypeTests(unittest.TestCase):
         self.assertIn("periindex_sepsis_flag", sql)
         self.assertIn("ck_confirmed_nontrauma_case", sql)
         self.assertIn("eligible_control", sql)
+        self.assertIn("summary AS", sql)
+        self.assertIn("UNNEST", sql)
 
     def test_incident_feasibility_dry_run_uses_aggregate_sql(self) -> None:
         paths_dict, config = _config()
@@ -420,6 +423,18 @@ class EIRPhenotypeTests(unittest.TestCase):
         self.assertEqual(estimate["mode"], "bigquery")
         self.assertEqual(estimate["estimated_query_cost_usd"], 1024 / float(1024**4) * 6.25)
         self.assertIn("case_funnel", mocked.call_args.args[0])
+
+    def test_incident_feasibility_can_reuse_existing_cohort_tsv(self) -> None:
+        paths_dict, config = _config()
+        cohort = build_eir_cohort(config)
+        cohort_path = Path(paths_dict["root"]) / "built_cohort.tsv"
+        cohort.to_csv(cohort_path, sep="\t", index=False)
+
+        _, paths, outputs = run_incident_feasibility(config, from_cohort_tsv=str(cohort_path))
+
+        counts = outputs["feasibility_counts"].set_index("metric")["n"].astype(int)
+        self.assertEqual(int(counts["Primary non-trauma incident cases"]), 10)
+        self.assertTrue(Path(incident_feasibility_counts_path(paths)).exists())
 
 
 if __name__ == "__main__":
