@@ -85,6 +85,21 @@ from .incident_feasibility import (
     run_incident_feasibility,
 )
 from .io_utils import read_table
+from .microarray_bigsnpr import (
+    BIGSNPR_DEFAULT_ALPHAS,
+    microarray_bigsnpr_default_label,
+    microarray_bigsnpr_metrics_path,
+    microarray_bigsnpr_metadata_path,
+    microarray_bigsnpr_predictions_path,
+    microarray_bigsnpr_qc_path,
+    microarray_bigsnpr_report_path,
+    microarray_bigsnpr_risk_decile_path,
+    microarray_bigsnpr_score_distribution_path,
+    microarray_bigsnpr_script_path,
+    microarray_bigsnpr_selected_variants_path,
+    microarray_bigsnpr_variant_qc_summary_path,
+    run_microarray_bigsnpr_model,
+)
 from .microarray_plink_gwas import (
     microarray_plink_default_label,
     microarray_plink_lead_hits_path,
@@ -564,6 +579,78 @@ def _build_parser() -> argparse.ArgumentParser:
         "--plink2-bin",
         default="plink2",
         help="PLINK2 executable. Default: plink2.",
+    )
+
+    microarray_bigsnpr_parser = subparsers.add_parser(
+        "run-microarray-bigsnpr-model",
+        help="Prepare a QC'd microarray PLINK subset and run a sparse bigsnpr/bigstatsr SNP prediction model.",
+    )
+    _add_config_arguments(microarray_bigsnpr_parser)
+    microarray_bigsnpr_parser.add_argument(
+        "--chromosomes",
+        default="22",
+        help="Comma-separated autosome list. Default: 22.",
+    )
+    microarray_bigsnpr_parser.add_argument(
+        "--plink-prefix",
+        default=None,
+        help="Local PLINK prefix for arrays.bed/bim/fam. Default: ~/plink_microarray/arrays.",
+    )
+    microarray_bigsnpr_parser.add_argument(
+        "--copy-plink-to",
+        default=None,
+        help="Copy AoU microarray PLINK files into this local directory before running. Existing files are reused.",
+    )
+    microarray_bigsnpr_parser.add_argument(
+        "--overwrite-plink-copy",
+        action="store_true",
+        help="Re-copy AoU microarray PLINK files even when local files already exist.",
+    )
+    microarray_bigsnpr_parser.add_argument("--min-maf", type=float, default=0.05, help="Minimum train-sample MAF. Default: 0.05.")
+    microarray_bigsnpr_parser.add_argument("--min-mac", type=int, default=20, help="Minimum train-sample MAC. Default: 20.")
+    microarray_bigsnpr_parser.add_argument(
+        "--min-call-rate",
+        type=float,
+        default=0.98,
+        help="Minimum train-sample variant call rate. Default: 0.98.",
+    )
+    microarray_bigsnpr_parser.add_argument(
+        "--hwe-p-control",
+        type=float,
+        default=1e-6,
+        help="Minimum HWE p-value among train controls. Default: 1e-6.",
+    )
+    microarray_bigsnpr_parser.add_argument(
+        "--eligibility-flag",
+        default="primary_model_eligible",
+        help="Eligibility flag in clinical_model_input.tsv. Default: primary_model_eligible.",
+    )
+    microarray_bigsnpr_parser.add_argument(
+        "--label",
+        default=None,
+        help="Output label under stage4/microarray_bigsnpr/. Defaults to microarray_bigsnpr_chr<chromosomes>_maf<min-maf>_train_qc.",
+    )
+    microarray_bigsnpr_parser.add_argument("--threads", type=int, default=None, help="Optional PLINK2/R thread count.")
+    microarray_bigsnpr_parser.add_argument("--memory-mb", type=int, default=None, help="Optional PLINK2 memory limit in MiB.")
+    microarray_bigsnpr_parser.add_argument("--plink2-bin", default="plink2", help="PLINK2 executable. Default: plink2.")
+    microarray_bigsnpr_parser.add_argument("--rscript-bin", default="Rscript", help="Rscript executable. Default: Rscript.")
+    microarray_bigsnpr_parser.add_argument(
+        "--alphas",
+        default=",".join(f"{value:g}" for value in BIGSNPR_DEFAULT_ALPHAS),
+        help="Comma-separated elastic-net alphas for big_spLogReg. Default: 1,0.5,0.1,0.01.",
+    )
+    microarray_bigsnpr_parser.add_argument("--folds", type=int, default=5, help="Internal CMSA fold count. Default: 5.")
+    microarray_bigsnpr_parser.add_argument("--nlambda", type=int, default=100, help="Number of lambda values. Default: 100.")
+    microarray_bigsnpr_parser.add_argument("--dfmax", type=int, default=50000, help="Maximum nonzero coefficients. Default: 50000.")
+    microarray_bigsnpr_parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="Prepare PLINK subset and R script but do not run Rscript.",
+    )
+    microarray_bigsnpr_parser.add_argument(
+        "--force-plink-subset",
+        action="store_true",
+        help="Rebuild the QC'd PLINK subset even if it already exists.",
     )
 
     microarray_prs_parser = subparsers.add_parser(
@@ -1134,6 +1221,55 @@ def main(argv: list[str] | None = None) -> int:
         print(f"report: {microarray_plink_report_path(paths, label)}")
         print(f"manhattan: {microarray_plink_manhattan_path(paths, label)}")
         print(f"qq: {microarray_plink_qq_path(paths, label)}")
+        return 0
+
+    if args.command == "run-microarray-bigsnpr-model":
+        effective, paths, matched_df = _load_hail_pilot_matched_input(
+            config,
+            eligibility_flag=args.eligibility_flag,
+        )
+        chromosomes = [value.strip() for value in args.chromosomes.split(",") if value.strip()]
+        label = args.label or microarray_bigsnpr_default_label(chromosomes, min_maf=args.min_maf)
+        outputs = run_microarray_bigsnpr_model(
+            effective,
+            matched_df,
+            paths,
+            chromosomes=chromosomes,
+            min_maf=args.min_maf,
+            min_mac=args.min_mac,
+            min_call_rate=args.min_call_rate,
+            hwe_p_control=args.hwe_p_control,
+            eligibility_flag=args.eligibility_flag,
+            label=label,
+            plink_prefix=args.plink_prefix,
+            copy_plink_to=args.copy_plink_to,
+            overwrite_plink_copy=args.overwrite_plink_copy,
+            threads=args.threads,
+            memory_mb=args.memory_mb,
+            plink2_bin=args.plink2_bin,
+            rscript_bin=args.rscript_bin,
+            alphas=tuple(parse_thresholds(args.alphas)),
+            folds=args.folds,
+            nlambda=args.nlambda,
+            dfmax=args.dfmax,
+            prepare_only=args.prepare_only,
+            reuse_plink_subset=not args.force_plink_subset,
+        )
+        variant_qc = outputs["variant_qc"]
+        print(f"Microarray bigsnpr variant QC rows: {variant_qc.shape[0]}")
+        print(f"sample_metadata: {microarray_bigsnpr_metadata_path(paths, label)}")
+        print(f"variant_qc_summary: {microarray_bigsnpr_variant_qc_summary_path(paths, label)}")
+        print(f"qc: {microarray_bigsnpr_qc_path(paths, label)}")
+        print(f"r_script: {microarray_bigsnpr_script_path(paths, label)}")
+        print(f"report: {microarray_bigsnpr_report_path(paths, label)}")
+        if args.prepare_only:
+            print("Prepared PLINK subset and R script only; rerun without --prepare-only to fit the bigsnpr model.")
+        else:
+            print(f"metrics: {microarray_bigsnpr_metrics_path(paths, label)}")
+            print(f"predictions: {microarray_bigsnpr_predictions_path(paths, label)}")
+            print(f"selected_variants: {microarray_bigsnpr_selected_variants_path(paths, label)}")
+            print(f"score_distribution: {microarray_bigsnpr_score_distribution_path(paths, label)}")
+            print(f"risk_decile: {microarray_bigsnpr_risk_decile_path(paths, label)}")
         return 0
 
     if args.command == "run-microarray-plink-prs":
