@@ -28,6 +28,15 @@ from aou_workbench.eir import (
     eir_table1_path,
     run_eir_clinical_model,
 )
+from aou_workbench.incident_feasibility import (
+    estimate_incident_feasibility_artifacts,
+    incident_case_funnel_path,
+    incident_feasibility_counts_path,
+    incident_feasibility_report_path,
+    incident_microarray_overlap_counts_path,
+    render_incident_feasibility_sql,
+    run_incident_feasibility,
+)
 
 
 def _write_table(path: Path, rows: list[dict]) -> str:
@@ -303,6 +312,11 @@ class EIRPhenotypeTests(unittest.TestCase):
         parsed = parser.parse_args(["run-eir-clinical-model", "--run-sparse"])
         self.assertEqual(parsed.command, "run-eir-clinical-model")
         self.assertTrue(parsed.run_sparse)
+        parsed = parser.parse_args(["incident-rhabdo-feasibility", "--dry-run", "--max-tib", "0.5", "--microarray-fam", "arrays.fam"])
+        self.assertEqual(parsed.command, "incident-rhabdo-feasibility")
+        self.assertTrue(parsed.dry_run)
+        self.assertEqual(parsed.max_tib, 0.5)
+        self.assertEqual(parsed.microarray_fam, "arrays.fam")
 
     def test_eir_dry_run_noops_for_local_tables(self) -> None:
         _, config = _config()
@@ -343,6 +357,69 @@ class EIRPhenotypeTests(unittest.TestCase):
         self.assertEqual(int(summary["eligible_control"].sum()), 2)
         self.assertTrue(Path(paths.built_cohort_tsv).exists())
         self.assertEqual(mocked.call_args.kwargs["stream_tsv_path"], paths.built_cohort_tsv)
+
+    def test_incident_feasibility_local_outputs_and_keeps_sepsis_as_flag(self) -> None:
+        paths_dict, config = _config()
+        fam_path = Path(paths_dict["root"]) / "arrays.fam"
+        fam_path.write_text(
+            "\n".join(
+                [
+                    "0 1 0 0 0 NA",
+                    "0 2 0 0 0 NA",
+                    "0 4 0 0 0 NA",
+                    "0 15 0 0 0 NA",
+                    "0 20 0 0 0 NA",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        _, paths, outputs = run_incident_feasibility(config, microarray_fam=str(fam_path))
+        counts = outputs["feasibility_counts"].set_index("metric")["n"].astype(int)
+        case_funnel = outputs["case_funnel"].set_index("metric")["n"].astype(int)
+        microarray = outputs["microarray_overlap_counts"].set_index("metric")["n"].astype(int)
+
+        self.assertEqual(int(counts["Primary non-trauma incident cases"]), 10)
+        self.assertEqual(int(counts["CK-confirmed non-trauma cases"]), 9)
+        self.assertEqual(int(case_funnel["Peri-index sepsis-flagged non-trauma cases"]), 1)
+        self.assertEqual(int(microarray["Primary non-trauma incident cases with microarray"]), 3)
+        self.assertEqual(int(microarray["Peri-index sepsis-flagged cases with microarray"]), 1)
+        self.assertTrue(Path(incident_feasibility_counts_path(paths)).exists())
+        self.assertTrue(Path(incident_case_funnel_path(paths)).exists())
+        self.assertTrue(Path(incident_microarray_overlap_counts_path(paths)).exists())
+        self.assertTrue(Path(incident_feasibility_report_path(paths)).exists())
+
+    def test_incident_feasibility_sql_contains_primary_rules(self) -> None:
+        _, config = _config()
+        sql = render_incident_feasibility_sql(config)
+
+        self.assertIn("INTERVAL 365 DAY", sql)
+        self.assertIn("omop_condition_record_dates >= 2", sql)
+        self.assertIn("prior_rhabdo_date IS NULL", sql)
+        self.assertIn("prior_high_ck = 0", sql)
+        self.assertIn("excluded_periindex_trauma = 0", sql)
+        self.assertIn("periindex_sepsis_flag", sql)
+        self.assertIn("ck_confirmed_nontrauma_case", sql)
+        self.assertIn("eligible_control", sql)
+
+    def test_incident_feasibility_dry_run_uses_aggregate_sql(self) -> None:
+        paths_dict, config = _config()
+        bigquery_config = replace(
+            config,
+            phenotype=replace(
+                config.phenotype,
+                tables=replace(config.phenotype.tables, cohort_table=None),
+            ),
+        )
+        sql_path = str(Path(paths_dict["root"]) / "incident.sql")
+
+        with patch("aou_workbench.incident_feasibility.dry_run_bigquery_query", return_value={"total_bytes_processed": 1024, "total_tib_processed": 1024 / float(1024**4), "maximum_bytes_billed": None, "would_exceed_maximum_bytes_billed": False}) as mocked:
+            _, _, estimate = estimate_incident_feasibility_artifacts(bigquery_config, max_tib=1.0, write_sql_path=sql_path)
+
+        self.assertEqual(estimate["mode"], "bigquery")
+        self.assertEqual(estimate["estimated_query_cost_usd"], 1024 / float(1024**4) * 6.25)
+        self.assertIn("case_funnel", mocked.call_args.args[0])
 
 
 if __name__ == "__main__":

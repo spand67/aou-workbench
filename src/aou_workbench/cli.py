@@ -74,6 +74,16 @@ from .eir import (
     run_eir_clinical_model,
 )
 from .gwas_workflow import prepare_terminal_gwas_workspace
+from .incident_feasibility import (
+    estimate_incident_feasibility_artifacts,
+    incident_baseline_history_bins_path,
+    incident_case_funnel_path,
+    incident_control_funnel_path,
+    incident_feasibility_counts_path,
+    incident_feasibility_report_path,
+    incident_microarray_overlap_counts_path,
+    run_incident_feasibility,
+)
 from .io_utils import read_table
 from .microarray_plink_gwas import (
     microarray_plink_default_label,
@@ -330,6 +340,33 @@ def _build_parser() -> argparse.ArgumentParser:
         "--run-sparse",
         action="store_true",
         help="Request the optional sparse OMOP model. The v1 command records a clear skipped status if unavailable.",
+    )
+
+    incident_feasibility_parser = subparsers.add_parser(
+        "incident-rhabdo-feasibility",
+        help="Run aggregate feasibility counts for incident non-traumatic rhabdomyolysis prediction.",
+    )
+    _add_eir_config_arguments(incident_feasibility_parser)
+    incident_feasibility_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Estimate BigQuery bytes scanned and optional billing cap without executing the feasibility query.",
+    )
+    incident_feasibility_parser.add_argument(
+        "--max-tib",
+        type=float,
+        default=None,
+        help="Optional BigQuery maximum bytes billed cap in TiB. The query fails before billing if the estimate is higher.",
+    )
+    incident_feasibility_parser.add_argument(
+        "--write-sql",
+        default=None,
+        help="Optional local path to write the rendered aggregate feasibility SQL for review.",
+    )
+    incident_feasibility_parser.add_argument(
+        "--microarray-fam",
+        default=None,
+        help="Optional local AoU microarray PLINK .fam path for case/control microarray overlap counts.",
     )
 
     wgs_manifest_parser = subparsers.add_parser(
@@ -893,6 +930,51 @@ def main(argv: list[str] | None = None) -> int:
         print(f"risk_deciles: {eir_risk_decile_path(paths)}")
         print(f"sparse_status: {eir_sparse_status_path(paths)}")
         print(f"sparse_report: {eir_sparse_report_path(paths)}")
+        return 0
+
+    if args.command == "incident-rhabdo-feasibility":
+        if args.dry_run:
+            _, _, estimate = estimate_incident_feasibility_artifacts(
+                config,
+                max_tib=args.max_tib,
+                write_sql_path=args.write_sql,
+            )
+            total_bytes = int(estimate.get("total_bytes_processed", 0))
+            total_tib = float(estimate.get("total_tib_processed", 0.0))
+            estimated_cost = float(estimate.get("estimated_query_cost_usd", 0.0))
+            max_bytes = estimate.get("maximum_bytes_billed")
+            print("Incident rhabdo feasibility BigQuery dry run")
+            print(f"Mode: {estimate.get('mode', 'unknown')}")
+            print(f"Estimated bytes processed: {total_bytes}")
+            print(f"Estimated TiB processed: {total_tib:.4f}")
+            print(f"Approx on-demand query cost: ${estimated_cost:.2f}")
+            if max_bytes is not None:
+                print(f"Maximum bytes billed cap: {int(max_bytes)} ({int(max_bytes) / float(1024**4):.4f} TiB)")
+                if estimate.get("would_exceed_maximum_bytes_billed"):
+                    print("Cap status: estimated bytes exceed this cap; the real query would be refused before billing.")
+                else:
+                    print("Cap status: estimated bytes are within this cap.")
+            if estimate.get("sql_path"):
+                print(f"SQL path: {estimate['sql_path']}")
+            if estimate.get("message"):
+                print(str(estimate["message"]))
+            if args.microarray_fam:
+                print("Microarray FAM overlap is skipped during dry-run.")
+            return 0
+        _, paths, outputs = run_incident_feasibility(
+            config,
+            max_tib=args.max_tib,
+            write_sql_path=args.write_sql,
+            microarray_fam=args.microarray_fam,
+        )
+        print(f"Incident rhabdo feasibility rows: {outputs['feasibility_counts'].shape[0]}")
+        print(f"feasibility_counts: {incident_feasibility_counts_path(paths)}")
+        print(f"case_funnel: {incident_case_funnel_path(paths)}")
+        print(f"control_funnel: {incident_control_funnel_path(paths)}")
+        print(f"baseline_history_bins: {incident_baseline_history_bins_path(paths)}")
+        if "microarray_overlap_counts" in outputs:
+            print(f"microarray_overlap_counts: {incident_microarray_overlap_counts_path(paths)}")
+        print(f"report: {incident_feasibility_report_path(paths)}")
         return 0
 
     if args.command == "prepare-wgs-manifest":
