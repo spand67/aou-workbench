@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -365,6 +366,16 @@ def write_bigsnpr_r_script(
     script_path = microarray_bigsnpr_script_path(paths, label)
     covar_r = "c(" + ", ".join(json.dumps(column) for column in covariates) + ")"
     script = f"""#!/usr/bin/env Rscript
+# Keep BLAS/OpenMP single-threaded; `big_spLogReg(ncores=...)` provides the
+# outer parallelism. This avoids bigstatsr's nested-parallelism guard.
+Sys.setenv(
+  OMP_NUM_THREADS = "1",
+  OPENBLAS_NUM_THREADS = "1",
+  MKL_NUM_THREADS = "1",
+  BLAS_NUM_THREADS = "1",
+  VECLIB_MAXIMUM_THREADS = "1"
+)
+
 required <- c("bigsnpr", "bigstatsr")
 missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing) > 0) {{
@@ -542,6 +553,22 @@ writeLines(report, file.path(out_dir, "report.md"))
     return script_path
 
 
+def _run_rscript_command(rscript_bin: str, script: str) -> None:
+    env = os.environ.copy()
+    for name in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "BLAS_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        env[name] = "1"
+    print("Running: " + " ".join([rscript_bin, script]), flush=True)
+    result = subprocess.run([rscript_bin, script], check=False, env=env)
+    if result.returncode != 0:
+        raise RuntimeError(f"Command failed with exit code {result.returncode}: {' '.join([rscript_bin, script])}")
+
+
 def run_microarray_bigsnpr_model(
     config: ProjectConfig,
     matched_df: pd.DataFrame,
@@ -684,7 +711,7 @@ def run_microarray_bigsnpr_model(
     if not prepare_only:
         if shutil.which(rscript_bin) is None and not Path(rscript_bin).exists():
             raise RuntimeError(f"Could not find Rscript binary `{rscript_bin}`. Re-run with --prepare-only or install R.")
-        _run_command([rscript_bin, script])
+        _run_rscript_command(rscript_bin, script)
 
     return {
         "metadata": metadata,
