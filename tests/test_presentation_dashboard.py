@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import unittest
@@ -197,6 +198,32 @@ class PresentationDashboardTests(unittest.TestCase):
         self.assertTrue(Path(presentation_timing_table_path(output_paths)).exists())
         self.assertTrue(Path(presentation_train_prs_svg_path(output_paths)).exists())
         self.assertTrue(Path(presentation_train_prs_summary_path(output_paths)).exists())
+
+    def test_presentation_dashboard_labels_definite_primary_as_ck_confirmed(self) -> None:
+        _, config, output_paths = _build_characterized_demo()
+        config = replace(
+            config,
+            cohort=replace(config.cohort, primary_case_tier="definite", sensitivity_case_tiers=("broad",)),
+            analysis=replace(config.analysis, analysis_name="rhabdo_ck_confirmed_v1"),
+        )
+        _write_representative_dashboard_inputs(output_paths, gwas_label="gwas", prs_label="prs", clinical_prs_label="clinical-prs")
+
+        dashboard = render_presentation_dashboard(
+            config,
+            output_paths,
+            gwas_label="gwas",
+            prs_label="prs",
+            clinical_prs_label="clinical-prs",
+            diagnostics_label="diag",
+        )
+
+        text = Path(dashboard).read_text(encoding="utf-8")
+        consort_svg = Path(presentation_consort_svg_path(output_paths)).read_text(encoding="utf-8")
+        self.assertIn("CK-Confirmed Rhabdomyolysis Susceptibility Dashboard", text)
+        self.assertIn("CK-confirmed cases", text)
+        self.assertIn("Primary case tier: <code>definite</code>", text)
+        self.assertIn("sepsis and renal injury are characterized but not excluded", text)
+        self.assertIn("CK-confirmed rhabdomyolysis cases", consort_svg)
 
     def test_timing_summary_uses_participants_and_control_index_dates(self) -> None:
         paths = build_demo_project_tree()

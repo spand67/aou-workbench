@@ -1,0 +1,22 @@
+control_ratio: 4
+minimum_controls: 1
+age_tolerance_years: 5
+index_window_days: 365
+exact_match_columns:
+  - is_female
+  - ancestry_pred
+primary_case_tier: definite
+sensitivity_case_tiers: [broad]
+covariate_columns:
+  - age_at_index
+  - is_female
+  - pc1
+  - pc2
+  - pc3
+  - pc4
+  - pc5
+  - preindex_crush_injury
+  - preindex_renal_injury
+  - preindex_sepsis
+require_complete_matches: false
+allow_reuse_controls: false

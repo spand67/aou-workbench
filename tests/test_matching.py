@@ -30,6 +30,27 @@ class MatchingTests(unittest.TestCase):
         self.assertGreater(int((matched_df["analysis_case"] == 0).sum()), 0)
         self.assertIn("match_group_id", matched_df.columns)
 
+    def test_matching_can_use_definite_as_primary_case_tier(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        config = replace(
+            config,
+            cohort=replace(config.cohort, primary_case_tier="definite", sensitivity_case_tiers=("broad",)),
+        )
+        cohort_df = build_rhabdo_cohort(config)
+        matched_df = match_case_controls(cohort_df, config)
+        case_rows = matched_df[matched_df["analysis_case"] == 1]
+
+        self.assertGreater(int(case_rows.shape[0]), 0)
+        self.assertTrue(case_rows["case_tier"].eq("definite").all())
+        self.assertTrue(case_rows["definite_rhabdo_case"].fillna(0).astype(int).eq(1).all())
+
     def test_matching_accepts_reloaded_tsv_with_string_dates(self) -> None:
         paths = build_demo_project_tree()
         config = load_project_config(

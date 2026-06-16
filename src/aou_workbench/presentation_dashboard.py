@@ -236,11 +236,35 @@ def _split_counts(split_summary: pd.DataFrame, group: str, column: str) -> int |
     return int(value.iloc[0]) if not value.empty else None
 
 
-def _write_consort_svg(consort: pd.DataFrame, split_summary: pd.DataFrame, path: str) -> None:
+def _is_ck_confirmed_primary(config: ProjectConfig) -> bool:
+    return str(config.cohort.primary_case_tier).lower() == "definite"
+
+
+def _dashboard_title(config: ProjectConfig) -> str:
+    if _is_ck_confirmed_primary(config):
+        return "CK-Confirmed Rhabdomyolysis Susceptibility Dashboard"
+    return "Rhabdomyolysis Analysis Dashboard"
+
+
+def _primary_case_step(config: ProjectConfig) -> str:
+    return "Definite rhabdo cases" if _is_ck_confirmed_primary(config) else "Broad rhabdo cases"
+
+
+def _primary_case_card_label(config: ProjectConfig) -> str:
+    return "CK-confirmed cases" if _is_ck_confirmed_primary(config) else "Broad cases"
+
+
+def _primary_case_flow_label(config: ProjectConfig) -> str:
+    if _is_ck_confirmed_primary(config):
+        return "CK-confirmed rhabdomyolysis cases"
+    return "Broad rhabdomyolysis cases"
+
+
+def _write_consort_svg(config: ProjectConfig, consort: pd.DataFrame, split_summary: pd.DataFrame, path: str) -> None:
     rows = [
         ("Full built cohort", _consort_n(consort, "Built cohort rows")),
         ("EHR denominator eligible", _consort_n(consort, ">=2 OMOP condition dates")),
-        ("Broad rhabdomyolysis cases", _consort_n(consort, "Broad rhabdo cases")),
+        (_primary_case_flow_label(config), _consort_n(consort, _primary_case_step(config))),
         ("Eligible controls", _consort_n(consort, "Eligible controls")),
         ("Matched analytic cohort", _consort_n(consort, "Matched analytic rows")),
         ("Matched cases", _consort_n(consort, "Matched cases")),
@@ -559,15 +583,28 @@ def _gwas_cards(paths: ProjectPaths, gwas_label: str, prs_label: str) -> str:
     )
 
 
-def _definition_cards() -> str:
+def _definition_cards(config: ProjectConfig) -> str:
     definitions = [
         ("Study denominator", "Observation-period data and at least two distinct OMOP condition record dates."),
         ("Broad case", "At least one rhabdomyolysis OMOP condition record; CK not required."),
-        ("Definite subset", "Broad case plus CK >5000 from 7 days before through 45 days after first rhabdo diagnosis."),
+        ("Definite case", "Broad case plus CK >5000 from 7 days before through 45 days after first rhabdo diagnosis."),
         ("Control", "No rhabdomyolysis diagnosis and no CK >5000 evidence; missing CK allowed."),
         ("Excluded", "CK >5000 without rhabdomyolysis diagnosis is indeterminate and excluded from primary case-control analysis."),
-        ("Primary model/GWAS", "Broad cases versus matched eligible controls, using primary non-traumatic eligibility."),
     ]
+    if _is_ck_confirmed_primary(config):
+        definitions.append(
+            (
+                "Primary model/GWAS",
+                "CK-confirmed cases versus matched eligible controls; crush/major trauma is excluded from primary eligibility, while sepsis and renal injury are characterized but not excluded.",
+            )
+        )
+    else:
+        definitions.append(
+            (
+                "Primary model/GWAS",
+                "Broad cases versus matched eligible controls, using primary non-traumatic eligibility.",
+            )
+        )
     return '<div class="definition-grid">' + "".join(
         f'<article class="definition"><h3>{html.escape(title)}</h3><p>{html.escape(text)}</p></article>'
         for title, text in definitions
@@ -683,7 +720,7 @@ def render_presentation_dashboard(
     split_table = _read_optional_table(split_table1_path(paths))
     model_input = _load_model_input(paths)
 
-    _write_consort_svg(consort, split_summary, presentation_consort_svg_path(paths))
+    _write_consort_svg(config, consort, split_summary, presentation_consort_svg_path(paths))
     timing = _cofactor_timing_summary(config, paths, model_input)
     write_dataframe(timing, presentation_timing_table_path(paths))
     _write_timing_svg(timing, presentation_timing_svg_path(paths))
@@ -702,7 +739,7 @@ def render_presentation_dashboard(
     cards = (
         '<div class="metric-grid">'
         + _card("Built cohort", _consort_n(consort, "Built cohort rows"))
-        + _card("Broad cases", _consort_n(consort, "Broad rhabdo cases"))
+        + _card(_primary_case_card_label(config), _consort_n(consort, _primary_case_step(config)))
         + _card("Eligible controls", _consort_n(consort, "Eligible controls"))
         + _card("Matched rows", _consort_n(consort, "Matched analytic rows"))
         + "</div>"
@@ -716,7 +753,7 @@ def render_presentation_dashboard(
             + '<div class="grid">'
             + _figure_card("CONSORT Flow", presentation_consort_svg_path(paths), output)
             + '<article class="panel"><div class="panel-head"><h3>Case And Control Definitions</h3></div>'
-            + _definition_cards()
+            + _definition_cards(config)
             + "</article></div>",
         ),
         _section(
@@ -827,8 +864,8 @@ def render_presentation_dashboard(
 <body>
   <div class="shell">
     <header class="hero">
-      <h1>Rhabdomyolysis Analysis Dashboard</h1>
-      <p>Presentation summary for supervisor review. Run root: <code>{html.escape(paths.run_root)}</code></p>
+      <h1>{html.escape(_dashboard_title(config))}</h1>
+      <p>Presentation summary for supervisor review. Primary case tier: <code>{html.escape(str(config.cohort.primary_case_tier))}</code>. Run root: <code>{html.escape(paths.run_root)}</code></p>
       <nav class="source" style="margin-top: 12px; display: flex; gap: 14px; flex-wrap: wrap;">{nav}</nav>
     </header>
     {''.join(sections)}
