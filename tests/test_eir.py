@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 import yaml
@@ -310,6 +312,37 @@ class EIRPhenotypeTests(unittest.TestCase):
         self.assertEqual(estimate["total_bytes_processed"], 0)
         self.assertEqual(estimate["estimated_query_cost_usd"], 0.0)
         self.assertEqual(estimate["maximum_bytes_billed"], int(0.5 * 1024**4))
+
+    def test_bigquery_artifact_build_streams_to_tsv(self) -> None:
+        _, config = _config()
+        bigquery_config = replace(
+            config,
+            phenotype=replace(
+                config.phenotype,
+                tables=replace(config.phenotype.tables, cohort_table=None),
+            ),
+        )
+
+        def fake_stream(*args, **kwargs):
+            output_path = Path(kwargs["stream_tsv_path"])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame(
+                [
+                    {"person_id": "1", "eir_primary_case": 1, "eligible_control": 0},
+                    {"person_id": "2", "eir_primary_case": 0, "eligible_control": 1},
+                    {"person_id": "3", "eir_primary_case": 0, "eligible_control": 1},
+                ]
+            ).to_csv(output_path, sep="\t", index=False)
+            return {"row_count": 3, "total_bytes_billed": 123, "path": str(output_path)}
+
+        with patch("aou_workbench.eir._build_eir_cohort_bigquery_aggregated", side_effect=fake_stream) as mocked:
+            _, paths, summary = build_eir_cohort_artifacts(bigquery_config, max_tib=1.0, write_sql_path="eir.sql")
+
+        self.assertEqual(len(summary), 3)
+        self.assertEqual(int(summary["eir_primary_case"].sum()), 1)
+        self.assertEqual(int(summary["eligible_control"].sum()), 2)
+        self.assertTrue(Path(paths.built_cohort_tsv).exists())
+        self.assertEqual(mocked.call_args.kwargs["stream_tsv_path"], paths.built_cohort_tsv)
 
 
 if __name__ == "__main__":

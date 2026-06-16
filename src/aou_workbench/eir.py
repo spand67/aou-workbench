@@ -56,7 +56,7 @@ from .cohort_summary import (
     _stable_hash_score,
 )
 from .config import CaseTierRule, ClinicalCofactorRule, ProjectConfig
-from .io_utils import dry_run_bigquery_query, parse_date, query_bigquery_dataframe, read_table, write_dataframe, write_json, write_text
+from .io_utils import dry_run_bigquery_query, parse_date, query_bigquery_dataframe, query_bigquery_to_tsv, read_table, write_dataframe, write_json, write_text
 from .paths import ProjectPaths, build_output_paths, join_path
 from .phenotype_sql import _escape_term, _match_predicate, _qualify_table
 from .preflight import apply_runtime_defaults
@@ -904,6 +904,7 @@ def _build_eir_cohort_bigquery_aggregated(
     maximum_bytes_billed: int | None = None,
     dry_run: bool = False,
     write_sql_path: str | None = None,
+    stream_tsv_path: str | None = None,
 ) -> pd.DataFrame | dict[str, Any]:
     cdr = config.workbench.workspace_cdr or "{{workspace_cdr}}"
     person_table = _qualify_table(cdr, config.phenotype.tables.person_table)
@@ -1276,6 +1277,22 @@ FROM finalized
             }
         )
         return estimate
+
+    if stream_tsv_path:
+        metadata = query_bigquery_to_tsv(
+            sql,
+            stream_tsv_path,
+            maximum_bytes_billed=maximum_bytes_billed,
+            progress_label="EIR cohort build",
+        )
+        metadata.update(
+            {
+                "workflow": "eir_clinical_v1",
+                "mode": "bigquery_stream_tsv",
+                "sql_path": write_sql_path,
+            }
+        )
+        return metadata
 
     frame = query_bigquery_dataframe(
         sql,
@@ -1842,6 +1859,36 @@ def build_eir_cohort_artifacts(
 ) -> tuple[ProjectConfig, ProjectPaths, pd.DataFrame]:
     effective = _copy_with_eir_outcome(apply_runtime_defaults(config))
     paths = build_output_paths(effective)
+    if not effective.phenotype.tables.cohort_table:
+        stream_metadata = _build_eir_cohort_bigquery_aggregated(
+            effective,
+            maximum_bytes_billed=_bytes_from_tib(max_tib),
+            write_sql_path=write_sql_path,
+            stream_tsv_path=paths.built_cohort_tsv,
+        )
+        if not isinstance(stream_metadata, dict):  # pragma: no cover - defensive
+            raise RuntimeError("Expected EIR BigQuery streaming metadata, got a cohort table.")
+        summary = pd.read_csv(
+            paths.built_cohort_tsv,
+            sep="\t",
+            usecols=["eir_primary_case", "eligible_control"],
+            low_memory=False,
+        )
+        write_json(
+            {
+                "workflow": "eir_clinical_v1",
+                "lookback_days": LOOKBACK_DAYS,
+                "time_at_risk_days": TIME_AT_RISK_DAYS,
+                "primary_label": "CK-confirmed non-traumatic/non-septic rhabdomyolysis enriched for exertional rhabdomyolysis",
+                "rows": int(stream_metadata.get("row_count", len(summary))),
+                "primary_cases": int(pd.to_numeric(summary["eir_primary_case"], errors="coerce").fillna(0).sum()),
+                "eligible_controls": int(pd.to_numeric(summary["eligible_control"], errors="coerce").fillna(0).sum()),
+                "bigquery": stream_metadata,
+            },
+            paths.manifest_json,
+        )
+        return effective, paths, summary
+
     cohort = build_eir_cohort(effective, max_tib=max_tib, write_sql_path=write_sql_path)
     write_dataframe(cohort, paths.built_cohort_tsv)
     write_json(

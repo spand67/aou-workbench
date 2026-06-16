@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+import csv
 import io
 import json
 import os
@@ -89,6 +90,67 @@ def query_bigquery_dataframe(
     if progress_label:
         print(f"{progress_label}: downloaded {len(rows)} rows", flush=True)
     return pd.DataFrame(rows)
+
+
+def query_bigquery_to_tsv(
+    sql: str,
+    path: str,
+    *,
+    maximum_bytes_billed: int | None = None,
+    progress_label: str | None = None,
+    progress_every: int = 100_000,
+) -> dict[str, Any]:
+    try:
+        from google.cloud import bigquery  # type: ignore
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError("google-cloud-bigquery is required for BigQuery-backed inputs.") from exc
+    client = bigquery.Client()
+    job_config = None
+    if maximum_bytes_billed is not None:
+        job_config = bigquery.QueryJobConfig(maximum_bytes_billed=maximum_bytes_billed)
+    job = client.query(sql, job_config=job_config)
+    if progress_label:
+        print(f"{progress_label}: submitted BigQuery job {job.job_id} in {job.location}", flush=True)
+    started = time.monotonic()
+    while not job.done(reload=True):
+        if progress_label:
+            elapsed = int(time.monotonic() - started)
+            print(f"{progress_label}: BigQuery job {job.job_id} still running after {elapsed}s", flush=True)
+        time.sleep(30)
+    result = job.result()
+    elapsed = int(time.monotonic() - started)
+    bytes_processed = int(job.total_bytes_processed or 0)
+    bytes_billed = int(job.total_bytes_billed or 0)
+    if progress_label:
+        print(
+            f"{progress_label}: BigQuery job {job.job_id} finished after {elapsed}s "
+            f"({bytes_processed} bytes processed, {bytes_billed} bytes billed)",
+            flush=True,
+        )
+        print(f"{progress_label}: streaming result rows to {path}", flush=True)
+
+    ensure_parent_dir(path)
+    fieldnames = [field.name for field in result.schema]
+    row_count = 0
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t", lineterminator="\n", extrasaction="ignore")
+        writer.writeheader()
+        for row in result:
+            writer.writerow({key: ("" if value is None else value) for key, value in dict(row.items()).items()})
+            row_count += 1
+            if progress_label and progress_every > 0 and row_count % progress_every == 0:
+                print(f"{progress_label}: streamed {row_count} rows", flush=True)
+    if progress_label:
+        print(f"{progress_label}: streamed {row_count} rows to {path}", flush=True)
+    return {
+        "job_id": job.job_id,
+        "location": job.location,
+        "total_bytes_processed": bytes_processed,
+        "total_bytes_billed": bytes_billed,
+        "row_count": row_count,
+        "path": path,
+        "elapsed_seconds": elapsed,
+    }
 
 
 def dry_run_bigquery_query(sql: str, *, maximum_bytes_billed: int | None = None) -> dict[str, Any]:
@@ -209,6 +271,7 @@ __all__ = [
     "parse_date",
     "dry_run_bigquery_query",
     "query_bigquery_dataframe",
+    "query_bigquery_to_tsv",
     "read_table",
     "slugify",
     "stable_hash",
