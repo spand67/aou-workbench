@@ -395,7 +395,8 @@ if (!file.exists(paste0(backingfile, ".rds"))) {{
   bigsnpr::snp_readBed(paste0(subset_prefix, ".bed"), backingfile = backingfile)
 }}
 obj <- bigsnpr::snp_attach(paste0(backingfile, ".rds"))
-G <- obj$genotypes
+Gna <- obj$genotypes
+G <- bigsnpr::snp_fastImputeSimple(Gna, method = "mean2", ncores = {int(ncores)})
 fam <- obj$fam
 map <- obj$map
 metadata <- read.delim(metadata_path, sep = "\\t", stringsAsFactors = FALSE, check.names = FALSE)
@@ -540,6 +541,7 @@ report <- c(
   "- Data source: AoU v8 microarray PLINK subset after train-sample variant QC.",
   "- Model: `bigstatsr::big_spLogReg` sparse logistic regression with age, sex, and PC covariates included unpenalized.",
   paste0("- Train rows: ", nrow(train_meta), "; test rows: ", nrow(test_meta)),
+  "- Missing genotypes were imputed with `bigsnpr::snp_fastImputeSimple(method = 'mean2')` before sparse logistic regression.",
   paste0("- Selected SNP coefficients: ", nrow(selected)),
   "",
   "## Metrics",

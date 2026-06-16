@@ -123,6 +123,8 @@ class MicroarrayBigsnprTests(unittest.TestCase):
         script = Path(script_path).read_text(encoding="utf-8")
 
         self.assertIn("bigsnpr::snp_readBed", script)
+        self.assertIn("bigsnpr::snp_fastImputeSimple", script)
+        self.assertIn('method = "mean2"', script)
         self.assertIn("bigstatsr::big_spLogReg", script)
         self.assertIn("pf.covar = rep(0, ncol(covar_train))", script)
         self.assertIn("predict(fit, G, ind.row = test_ind", script)
