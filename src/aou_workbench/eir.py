@@ -1277,7 +1277,11 @@ FROM finalized
         )
         return estimate
 
-    frame = query_bigquery_dataframe(sql, maximum_bytes_billed=maximum_bytes_billed)
+    frame = query_bigquery_dataframe(
+        sql,
+        maximum_bytes_billed=maximum_bytes_billed,
+        progress_label="EIR cohort build",
+    )
     date_columns = [
         "obs_start_date",
         "obs_end_date",

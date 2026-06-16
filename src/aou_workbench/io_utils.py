@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 from typing import Any, Mapping
 
 import pandas as pd
@@ -50,7 +51,12 @@ def is_bigquery_table(path: str) -> bool:
     return bool(re.fullmatch(r"[^./`]+[.][^./`]+[.][^./`]+", normalized))
 
 
-def query_bigquery_dataframe(sql: str, *, maximum_bytes_billed: int | None = None) -> pd.DataFrame:
+def query_bigquery_dataframe(
+    sql: str,
+    *,
+    maximum_bytes_billed: int | None = None,
+    progress_label: str | None = None,
+) -> pd.DataFrame:
     try:
         from google.cloud import bigquery  # type: ignore
     except ImportError as exc:  # pragma: no cover - environment dependent
@@ -59,7 +65,29 @@ def query_bigquery_dataframe(sql: str, *, maximum_bytes_billed: int | None = Non
     job_config = None
     if maximum_bytes_billed is not None:
         job_config = bigquery.QueryJobConfig(maximum_bytes_billed=maximum_bytes_billed)
-    rows = [dict(row.items()) for row in client.query(sql, job_config=job_config).result()]
+    job = client.query(sql, job_config=job_config)
+    if progress_label:
+        print(f"{progress_label}: submitted BigQuery job {job.job_id} in {job.location}", flush=True)
+    started = time.monotonic()
+    while not job.done(reload=True):
+        if progress_label:
+            elapsed = int(time.monotonic() - started)
+            print(f"{progress_label}: BigQuery job {job.job_id} still running after {elapsed}s", flush=True)
+        time.sleep(30)
+    result = job.result()
+    if progress_label:
+        elapsed = int(time.monotonic() - started)
+        bytes_processed = int(job.total_bytes_processed or 0)
+        bytes_billed = int(job.total_bytes_billed or 0)
+        print(
+            f"{progress_label}: BigQuery job {job.job_id} finished after {elapsed}s "
+            f"({bytes_processed} bytes processed, {bytes_billed} bytes billed)",
+            flush=True,
+        )
+        print(f"{progress_label}: downloading result rows", flush=True)
+    rows = [dict(row.items()) for row in result]
+    if progress_label:
+        print(f"{progress_label}: downloaded {len(rows)} rows", flush=True)
     return pd.DataFrame(rows)
 
 
