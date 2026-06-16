@@ -42,6 +42,23 @@ def _control_anchor_date(controls: pd.DataFrame) -> pd.Series:
     return controls["baseline_index_date"].combine_first(midpoint)
 
 
+def _age_at_date(frame: pd.DataFrame, index_date: object) -> pd.Series:
+    fallback = pd.to_numeric(frame.get("age_at_index", pd.Series(pd.NA, index=frame.index)), errors="coerce")
+    date = pd.Timestamp(index_date) if pd.notna(index_date) else pd.NaT
+    if pd.isna(date):
+        return fallback
+    age = fallback.copy()
+    if "birth_date" in frame.columns:
+        birth = parse_date(frame["birth_date"])
+        has_birth = birth.notna()
+        age.loc[has_birth] = (date - birth.loc[has_birth]).dt.days / 365.25
+    if "year_of_birth" in frame.columns:
+        yob = pd.to_numeric(frame["year_of_birth"], errors="coerce")
+        has_yob = yob.notna()
+        age.loc[has_yob] = date.year - yob.loc[has_yob]
+    return age
+
+
 def _match_stratum_key(frame: pd.DataFrame, columns: tuple[str, ...]) -> pd.Series:
     if not columns:
         return pd.Series([tuple()] * len(frame), index=frame.index, dtype=object)
@@ -111,9 +128,11 @@ def match_case_controls(cohort_df: pd.DataFrame, config: ProjectConfig) -> pd.Da
                 pool["control_anchor_date"] - case_index_date
             ).abs().dt.days.fillna(config.cohort.index_window_days + 1)
             pool = pool[pool["index_distance_days"] <= config.cohort.index_window_days]
+            pool["age_at_case_index"] = _age_at_date(pool, case_index_date)
         else:
             pool["index_distance_days"] = config.cohort.index_window_days
-        pool["age_distance_years"] = (pool["age_at_index"] - getattr(case, "age_at_index")).abs()
+            pool["age_at_case_index"] = pd.to_numeric(pool["age_at_index"], errors="coerce")
+        pool["age_distance_years"] = (pool["age_at_case_index"] - getattr(case, "age_at_index")).abs()
         pool = pool[pool["age_distance_years"] <= config.cohort.age_tolerance_years]
         pool = pool.sort_values(["age_distance_years", "index_distance_days", "person_id"])
         chosen = pool.head(config.cohort.control_ratio).copy()
@@ -143,6 +162,8 @@ def match_case_controls(cohort_df: pd.DataFrame, config: ProjectConfig) -> pd.Da
             control_row["match_rank"] = rank
             control_row["matched_control_count"] = int(len(chosen))
             control_row["match_complete"] = bool(len(chosen) >= config.cohort.control_ratio)
+            control_row["control_source_age_at_index"] = control_row.get("age_at_index")
+            control_row["age_at_index"] = control_row.get("age_at_case_index")
             control_row["control_source_index_date"] = control_row.get("baseline_index_date")
             control_row["index_date"] = case_index_date
             control_row["case_tier"] = "control"

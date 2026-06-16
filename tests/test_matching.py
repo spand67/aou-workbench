@@ -51,6 +51,65 @@ class MatchingTests(unittest.TestCase):
         self.assertTrue(case_rows["case_tier"].eq("definite").all())
         self.assertTrue(case_rows["definite_rhabdo_case"].fillna(0).astype(int).eq(1).all())
 
+    def test_controls_are_age_matched_at_inherited_case_index_date(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        config = replace(
+            config,
+            cohort=replace(
+                config.cohort,
+                primary_case_tier="definite",
+                exact_match_columns=("is_female", "ancestry_pred"),
+                age_tolerance_years=1,
+            ),
+        )
+        cohort_df = pd.DataFrame(
+            [
+                {
+                    "person_id": "1",
+                    "case_tier": "definite",
+                    "eligible_control": False,
+                    "index_date": "2020-01-01",
+                    "obs_start_date": "2010-01-01",
+                    "obs_end_date": "2025-01-01",
+                    "baseline_index_date": pd.NaT,
+                    "age_at_index": 40,
+                    "age_raw": 46,
+                    "year_of_birth": 1980,
+                    "is_female": 1,
+                    "ancestry_pred": "EUR",
+                },
+                {
+                    "person_id": "5",
+                    "case_tier": "control",
+                    "eligible_control": True,
+                    "index_date": pd.NaT,
+                    "obs_start_date": "2010-01-01",
+                    "obs_end_date": "2025-01-01",
+                    "baseline_index_date": "2020-01-01",
+                    "age_at_index": 46,
+                    "age_raw": 46,
+                    "year_of_birth": 1980,
+                    "is_female": 1,
+                    "ancestry_pred": "EUR",
+                },
+            ]
+        )
+
+        matched_df = match_case_controls(cohort_df, config)
+        controls = matched_df[matched_df["analysis_case"] == 0]
+
+        self.assertEqual(len(controls), 1)
+        self.assertEqual(float(controls["age_at_index"].iloc[0]), 40.0)
+        self.assertEqual(float(controls["control_source_age_at_index"].iloc[0]), 46.0)
+        self.assertEqual(str(pd.Timestamp(controls["index_date"].iloc[0]).date()), "2020-01-01")
+
     def test_matching_accepts_reloaded_tsv_with_string_dates(self) -> None:
         paths = build_demo_project_tree()
         config = load_project_config(
