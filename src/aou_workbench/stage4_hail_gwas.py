@@ -23,6 +23,7 @@ PILOT_COVARIATES = ("age_at_index", "is_female", "pc1", "pc2", "pc3", "pc4", "pc
 PILOT_CASE_CONTROL_REQUIRED_COLUMNS = ("match_group_id", "case_tier", "eligible_control")
 PILOT_GENOTYPE_SOURCES = ("acaf", "microarray")
 PILOT_HWE_FILTER_MODES = ("filter", "report-only")
+PASSING_GENOTYPE_FILTER_VALUES = ("", ".", "PASS")
 
 
 def hail_stage4_full_results_path(paths: ProjectPaths) -> str:
@@ -186,10 +187,16 @@ def _key_matrix_table_by_sample_id(mt, hl):
 
 def _matrix_table_gt(mt, hl):
     if "GT" in mt.entry:
-        return mt.GT
-    if "LGT" in mt.entry and "LA" in mt.entry:
-        return hl.vds.lgt_to_gt(mt.LGT, mt.LA)
-    raise RuntimeError("Genotype MatrixTable must contain GT, or LGT plus LA, for Hail pilot GWAS.")
+        gt = mt.GT
+    elif "LGT" in mt.entry and "LA" in mt.entry:
+        gt = hl.vds.lgt_to_gt(mt.LGT, mt.LA)
+    else:
+        raise RuntimeError("Genotype MatrixTable must contain GT, or LGT plus LA, for Hail pilot GWAS.")
+
+    if "FT" in mt.entry:
+        passing_filters = hl.literal(set(PASSING_GENOTYPE_FILTER_VALUES))
+        gt = hl.or_missing(hl.is_missing(mt.FT) | passing_filters.contains(mt.FT), gt)
+    return gt
 
 
 def _normalize_chromosomes(chromosomes: list[str] | None) -> list[str]:
@@ -1242,6 +1249,7 @@ def run_stage4_hail_pilot_gwas(
 __all__ = [
     "PILOT_COVARIATES",
     "PILOT_HWE_FILTER_MODES",
+    "PASSING_GENOTYPE_FILTER_VALUES",
     "hail_stage4_full_results_path",
     "hail_stage4_lead_hits_path",
     "hail_stage4_manhattan_path",

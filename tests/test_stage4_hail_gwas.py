@@ -15,8 +15,10 @@ from aou_workbench.paths import build_output_paths
 from aou_workbench.pipeline import build_cohort_artifacts, match_controls_artifacts
 from aou_workbench.stage1_prepare import stage1_sample_manifest_path
 from aou_workbench.stage4_hail_gwas import (
+    PASSING_GENOTYPE_FILTER_VALUES,
     _hail_pilot_sample_frame,
     _hail_sample_frame,
+    _matrix_table_gt,
     _normalize_autosomal_chromosomes,
     _normalize_chromosomes,
     _pilot_default_target_partitions,
@@ -31,6 +33,49 @@ from tests.support import build_demo_project_tree
 
 
 class Stage4HailGwasTests(unittest.TestCase):
+    def test_matrix_table_gt_masks_filtered_gt_entries(self) -> None:
+        class FakeExpression:
+            def __init__(self, text: str):
+                self.text = text
+
+            def __or__(self, other):
+                return FakeExpression(f"({self.text}) OR ({other.text})")
+
+        class FakeLiteral:
+            def __init__(self, values):
+                self.values = values
+
+            def contains(self, value):
+                return FakeExpression(f"{value.text} IN {sorted(self.values)}")
+
+        class FakeHail:
+            def __init__(self):
+                self.condition = None
+
+            def literal(self, values):
+                return FakeLiteral(values)
+
+            def is_missing(self, value):
+                return FakeExpression(f"is_missing({value.text})")
+
+            def or_missing(self, condition, value):
+                self.condition = condition
+                return ("or_missing", condition, value)
+
+        class FakeMatrixTable:
+            entry = {"GT": object(), "FT": object()}
+            GT = FakeExpression("GT")
+            FT = FakeExpression("FT")
+
+        fake_hail = FakeHail()
+        result = _matrix_table_gt(FakeMatrixTable(), fake_hail)
+
+        self.assertEqual(result[0], "or_missing")
+        self.assertIs(result[2], FakeMatrixTable.GT)
+        self.assertIn("is_missing(FT)", fake_hail.condition.text)
+        self.assertIn("PASS", fake_hail.condition.text)
+        self.assertIn(".", PASSING_GENOTYPE_FILTER_VALUES)
+
     def test_normalize_chromosomes_defaults_and_deduplicates(self) -> None:
         self.assertEqual(_normalize_chromosomes(None), [str(chrom) for chrom in range(1, 23)])
         self.assertEqual(_normalize_chromosomes(["chr1", "1", "19", "chr19", "22"]), ["1", "19", "22"])
