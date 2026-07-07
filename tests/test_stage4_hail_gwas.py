@@ -339,6 +339,27 @@ class Stage4HailGwasTests(unittest.TestCase):
             100,
         )
 
+    def test_variant_qc_summary_rows_allow_skipped_qc_counts(self) -> None:
+        rows = _variant_qc_summary_rows(
+            chromosomes=["5"],
+            initial_rows=None,
+            biallelic_rows=None,
+            maf_rows=None,
+            mac_rows=None,
+            call_rate_rows=None,
+            hwe_rows=None,
+            final_rows=None,
+            min_maf=0.01,
+            min_mac=20,
+            min_call_rate=0.98,
+            hwe_p_control=1e-6,
+            hwe_filter_mode="report-only",
+        )
+        summary = pd.DataFrame(rows)
+
+        self.assertEqual(summary["filter"].tolist()[-2:], ["control_hwe_p_report_only", "final_qc"])
+        self.assertTrue(summary[["rows_before", "rows_after", "rows_removed"]].isna().all().all())
+
     def test_hail_pilot_paths_are_labeled_and_do_not_overwrite_stage4(self) -> None:
         paths = build_demo_project_tree()
         config = load_project_config(
@@ -393,6 +414,7 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertFalse(args.write_qc_mt)
         self.assertFalse(args.export_hail_results_tsv)
         self.assertFalse(args.skip_variant_row_counts)
+        self.assertFalse(args.skip_qc_counts)
         self.assertEqual(args.results_preview_n, 100000)
 
         microarray_args = parser.parse_args(
@@ -409,6 +431,7 @@ class Stage4HailGwasTests(unittest.TestCase):
                 "--write-qc-mt",
                 "--export-hail-results-tsv",
                 "--skip-variant-row-counts",
+                "--skip-qc-counts",
                 "--results-preview-n",
                 "250000",
             ]
@@ -417,6 +440,7 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertTrue(hwe_args.write_qc_mt)
         self.assertTrue(hwe_args.export_hail_results_tsv)
         self.assertTrue(hwe_args.skip_variant_row_counts)
+        self.assertTrue(hwe_args.skip_qc_counts)
         self.assertEqual(hwe_args.results_preview_n, 250000)
 
         no_preview_args = parser.parse_args(["run-hail-pilot-gwas", "--results-preview-n", "0"])

@@ -514,6 +514,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip the separate pre-QC variant/biallelic row-count pass. Faster, but early QC denominator rows are blank.",
     )
     hail_pilot_parser.add_argument(
+        "--skip-qc-counts",
+        action="store_true",
+        help=(
+            "Skip the cumulative MAF/MAC/call-rate/HWE QC-count aggregation pass. "
+            "QC filters still apply before regression, but variant QC count rows and n_variants_tested are blank."
+        ),
+    )
+    hail_pilot_parser.add_argument(
         "--write-qc-mt",
         action="store_true",
         help="Write the QC-passing genotype MatrixTable to the workspace bucket and run GWAS from that persisted MT.",
@@ -1213,6 +1221,7 @@ def main(argv: list[str] | None = None) -> int:
             export_hail_results_tsv=args.export_hail_results_tsv,
             results_preview_n=args.results_preview_n,
             count_variant_rows=not args.skip_variant_row_counts,
+            count_qc_rows=not args.skip_qc_counts,
         )
         print(f"Hail pilot GWAS preview rows: {full.shape[0]}")
         print(f"Hail pilot GWAS lead hits: {hits.shape[0]}")

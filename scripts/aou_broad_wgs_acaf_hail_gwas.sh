@@ -34,6 +34,10 @@ ANALYSIS_SPLIT="${ANALYSIS_SPLIT:-train}"
 ELIGIBILITY_FLAG="${ELIGIBILITY_FLAG:-primary_model_eligible}"
 SMOKE_PREVIEW_N="${SMOKE_PREVIEW_N:-250000}"
 AUTOSOME_PREVIEW_N="${AUTOSOME_PREVIEW_N:-0}"
+SMOKE_SKIP_VARIANT_ROW_COUNTS="${SMOKE_SKIP_VARIANT_ROW_COUNTS:-1}"
+AUTOSOME_SKIP_VARIANT_ROW_COUNTS="${AUTOSOME_SKIP_VARIANT_ROW_COUNTS:-1}"
+SMOKE_SKIP_QC_COUNTS="${SMOKE_SKIP_QC_COUNTS:-0}"
+AUTOSOME_SKIP_QC_COUNTS="${AUTOSOME_SKIP_QC_COUNTS:-1}"
 
 slugify_label() {
   echo "$1" | tr '[:upper:]_' '[:lower:]-' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g'
@@ -128,6 +132,15 @@ run_hail_gwas_command() {
   local chromosomes="$1"
   local label="$2"
   local preview_n="$3"
+  local skip_variant_row_counts="$4"
+  local skip_qc_counts="$5"
+  local optional_args=()
+  if [ "$skip_variant_row_counts" = "1" ]; then
+    optional_args+=(--skip-variant-row-counts)
+  fi
+  if [ "$skip_qc_counts" = "1" ]; then
+    optional_args+=(--skip-qc-counts)
+  fi
   aou-workbench run-hail-pilot-gwas \
     --cohort-config "$COHORT_CONFIG" \
     --analysis-config "$ANALYSIS_CONFIG" \
@@ -140,7 +153,7 @@ run_hail_gwas_command() {
     --hwe-filter-mode "$HWE_FILTER_MODE" \
     --analysis-split "$ANALYSIS_SPLIT" \
     --eligibility-flag "$ELIGIBILITY_FLAG" \
-    --skip-variant-row-counts \
+    "${optional_args[@]}" \
     --results-preview-n "$preview_n" \
     --label "$label"
 }
@@ -148,7 +161,8 @@ run_hail_gwas_command() {
 write_autosomes_runner() {
   mkdir -p outputs/logs
   local runner="outputs/logs/hail_gwas_autosomes_broad_${RUN_ID}.sh"
-  cat > "$runner" <<EOF
+  {
+    cat <<EOF
 #!/usr/bin/env bash
 set -eu
 cd "$REPO_DIR"
@@ -168,10 +182,18 @@ aou-workbench run-hail-pilot-gwas \\
   --hwe-filter-mode "$HWE_FILTER_MODE" \\
   --analysis-split "$ANALYSIS_SPLIT" \\
   --eligibility-flag "$ELIGIBILITY_FLAG" \\
-  --skip-variant-row-counts \\
+EOF
+    if [ "$AUTOSOME_SKIP_VARIANT_ROW_COUNTS" = "1" ]; then
+      echo "  --skip-variant-row-counts \\"
+    fi
+    if [ "$AUTOSOME_SKIP_QC_COUNTS" = "1" ]; then
+      echo "  --skip-qc-counts \\"
+    fi
+    cat <<EOF
   --results-preview-n "$AUTOSOME_PREVIEW_N" \\
   --label "$AUTOSOME_LABEL"
 EOF
+  } > "$runner"
   chmod +x "$runner"
   echo "$runner"
 }
@@ -192,7 +214,7 @@ launch_autosomes() {
     echo "Monitor with: tail -f $REPO_DIR/$log_path"
   else
     run_logged hail_gwas_autosomes_broad \
-      run_hail_gwas_command "$AUTOSOME_CHROMOSOMES" "$AUTOSOME_LABEL" "$AUTOSOME_PREVIEW_N"
+      run_hail_gwas_command "$AUTOSOME_CHROMOSOMES" "$AUTOSOME_LABEL" "$AUTOSOME_PREVIEW_N" "$AUTOSOME_SKIP_VARIANT_ROW_COUNTS" "$AUTOSOME_SKIP_QC_COUNTS"
     review_gwas_outputs "AUTOSOMES" "$AUTOSOME_LABEL"
   fi
 }
@@ -224,6 +246,12 @@ main() {
   echo "HWE_FILTER_MODE=$HWE_FILTER_MODE"
   echo "ANALYSIS_SPLIT=$ANALYSIS_SPLIT"
   echo "ELIGIBILITY_FLAG=$ELIGIBILITY_FLAG"
+  echo "SMOKE_PREVIEW_N=$SMOKE_PREVIEW_N"
+  echo "AUTOSOME_PREVIEW_N=$AUTOSOME_PREVIEW_N"
+  echo "SMOKE_SKIP_VARIANT_ROW_COUNTS=$SMOKE_SKIP_VARIANT_ROW_COUNTS"
+  echo "AUTOSOME_SKIP_VARIANT_ROW_COUNTS=$AUTOSOME_SKIP_VARIANT_ROW_COUNTS"
+  echo "SMOKE_SKIP_QC_COUNTS=$SMOKE_SKIP_QC_COUNTS"
+  echo "AUTOSOME_SKIP_QC_COUNTS=$AUTOSOME_SKIP_QC_COUNTS"
 
   if [ "$RUN_CLINICAL" = "1" ]; then
     run_logged broad_wgs_build \
@@ -249,7 +277,7 @@ main() {
 
   if [ "$RUN_SMOKE" = "1" ]; then
     run_logged hail_gwas_chr5_broad \
-      run_hail_gwas_command "$SMOKE_CHROMOSOMES" "$SMOKE_LABEL" "$SMOKE_PREVIEW_N"
+      run_hail_gwas_command "$SMOKE_CHROMOSOMES" "$SMOKE_LABEL" "$SMOKE_PREVIEW_N" "$SMOKE_SKIP_VARIANT_ROW_COUNTS" "$SMOKE_SKIP_QC_COUNTS"
     review_gwas_outputs "CHR5" "$SMOKE_LABEL"
   fi
 

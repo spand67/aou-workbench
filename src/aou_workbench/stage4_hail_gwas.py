@@ -307,10 +307,10 @@ def _variant_qc_summary_rows(
     chromosomes: list[str],
     initial_rows: int | None,
     biallelic_rows: int | None,
-    maf_rows: int,
-    mac_rows: int,
-    call_rate_rows: int,
-    hwe_rows: int,
+    maf_rows: int | None,
+    mac_rows: int | None,
+    call_rate_rows: int | None,
+    hwe_rows: int | None,
     min_maf: float,
     min_mac: int,
     min_call_rate: float,
@@ -696,11 +696,12 @@ def _postprocess_pilot_hail_results(
     genotype_mt_path: str,
     covariates_used: list[str],
     dropped_covariates: list[str],
-    n_variants_tested: int,
+    n_variants_tested: int | None,
     results_preview_n: int,
     export_hail_results_tsv: bool,
     qc_pass_mt_uri: str | None,
     count_variant_rows: bool,
+    count_qc_rows: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     stage = config.analysis.stage4
     if stage is None:
@@ -730,7 +731,7 @@ def _postprocess_pilot_hail_results(
         preview_source = result_source.filter(hl.is_defined(result_source.regression_p))
         preview_rows = preview_source.order_by(preview_source.regression_p).take(preview_n)
         preview = _coerce_hail_result_frame(_hail_rows_to_dataframe(preview_rows))
-        preview_is_full = int(n_variants_tested) <= preview_n
+        preview_is_full = n_variants_tested is not None and int(n_variants_tested) <= preview_n
         if not preview.empty:
             preview = preview.sort_values(["regression_p", "variant_id"]).reset_index(drop=True)
             if preview_is_full:
@@ -770,13 +771,14 @@ def _postprocess_pilot_hail_results(
             "eligibility_flag": eligibility_flag,
             "wgs_manifest_used": wgs_manifest_used,
             "sample_counts": sample_counts,
-            "n_variants_tested": int(n_variants_tested),
+            "n_variants_tested": None if n_variants_tested is None else int(n_variants_tested),
             "n_lead_hits": int(lead_hits.shape[0]),
             "lambda_gc": lambda_gc,
             "local_results_preview_rows": int(preview.shape[0]),
             "local_results_preview_is_full": bool(preview_is_full),
             "local_results_preview_skipped": bool(preview_n <= 0),
             "variant_row_counts_skipped": not bool(count_variant_rows),
+            "variant_qc_counts_skipped": not bool(count_qc_rows),
             "min_maf": float(min_maf),
             "min_mac": int(min_mac),
             "min_call_rate": float(min_call_rate),
@@ -807,7 +809,7 @@ def _postprocess_pilot_hail_results(
                 f"{sample_counts.get('after_complete_case_controls', 0)}"
             ),
             f"- MatrixTable samples analyzed: {sample_counts.get('matrix_table_participants', 0)}",
-            f"- Variants tested after QC: {n_variants_tested}",
+            f"- Variants tested after QC: {n_variants_tested if n_variants_tested is not None else 'not counted'}",
             f"- Lead hits in preview: {lead_hits.shape[0]}",
             (
                 "- Local results preview: skipped; full output is Hail-native"
@@ -969,6 +971,7 @@ def run_stage4_hail_pilot_gwas(
     export_hail_results_tsv: bool = False,
     results_preview_n: int = 100_000,
     count_variant_rows: bool = True,
+    count_qc_rows: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     stage = config.analysis.stage4
     if stage is None:
@@ -1143,31 +1146,54 @@ def run_stage4_hail_pilot_gwas(
     call_rate_filter = mac_filter & hl.is_defined(mt.call_rate) & (mt.call_rate >= float(min_call_rate))
     hwe_pass_filter = call_rate_filter & hl.is_defined(mt.hwe_control_p) & (mt.hwe_control_p >= float(hwe_p_control))
     final_qc_filter = hwe_pass_filter if hwe_mode == "filter" else call_rate_filter
-    print("Computing cumulative variant QC counts.", flush=True)
-    qc_counts = mt.aggregate_rows(
-        hl.struct(
-            maf=hl.agg.count_where(maf_filter),
-            mac=hl.agg.count_where(mac_filter),
-            call_rate=hl.agg.count_where(call_rate_filter),
-            hwe=hl.agg.count_where(hwe_pass_filter),
-            final=hl.agg.count_where(final_qc_filter),
+    n_variants_tested: int | None = None
+    if count_qc_rows:
+        print("Computing cumulative variant QC counts.", flush=True)
+        qc_counts = mt.aggregate_rows(
+            hl.struct(
+                maf=hl.agg.count_where(maf_filter),
+                mac=hl.agg.count_where(mac_filter),
+                call_rate=hl.agg.count_where(call_rate_filter),
+                hwe=hl.agg.count_where(hwe_pass_filter),
+                final=hl.agg.count_where(final_qc_filter),
+            )
         )
-    )
-    qc_rows = _variant_qc_summary_rows(
-        chromosomes=chromosome_values,
-        initial_rows=initial_rows,
-        biallelic_rows=biallelic_rows,
-        maf_rows=int(qc_counts.maf),
-        mac_rows=int(qc_counts.mac),
-        call_rate_rows=int(qc_counts.call_rate),
-        hwe_rows=int(qc_counts.hwe),
-        min_maf=min_maf,
-        min_mac=min_mac,
-        min_call_rate=min_call_rate,
-        hwe_p_control=hwe_p_control,
-        hwe_filter_mode=hwe_mode,
-        final_rows=int(qc_counts.final),
-    )
+        n_variants_tested = int(qc_counts.final)
+        qc_rows = _variant_qc_summary_rows(
+            chromosomes=chromosome_values,
+            initial_rows=initial_rows,
+            biallelic_rows=biallelic_rows,
+            maf_rows=int(qc_counts.maf),
+            mac_rows=int(qc_counts.mac),
+            call_rate_rows=int(qc_counts.call_rate),
+            hwe_rows=int(qc_counts.hwe),
+            min_maf=min_maf,
+            min_mac=min_mac,
+            min_call_rate=min_call_rate,
+            hwe_p_control=hwe_p_control,
+            hwe_filter_mode=hwe_mode,
+            final_rows=n_variants_tested,
+        )
+    else:
+        print(
+            "Skipping cumulative variant QC-count pass; QC filters still apply before regression.",
+            flush=True,
+        )
+        qc_rows = _variant_qc_summary_rows(
+            chromosomes=chromosome_values,
+            initial_rows=initial_rows,
+            biallelic_rows=biallelic_rows,
+            maf_rows=None,
+            mac_rows=None,
+            call_rate_rows=None,
+            hwe_rows=None,
+            min_maf=min_maf,
+            min_mac=min_mac,
+            min_call_rate=min_call_rate,
+            hwe_p_control=hwe_p_control,
+            hwe_filter_mode=hwe_mode,
+            final_rows=None,
+        )
     mt = mt.filter_rows(final_qc_filter)
     mt = mt.annotate_rows(
         hwe_case=hl.agg.filter(
@@ -1250,11 +1276,12 @@ def run_stage4_hail_pilot_gwas(
         genotype_mt_path=genotype_mt_path,
         covariates_used=hail_covariates,
         dropped_covariates=dropped_covariates,
-        n_variants_tested=int(qc_counts.final),
+        n_variants_tested=n_variants_tested,
         results_preview_n=results_preview_n,
         export_hail_results_tsv=export_hail_results_tsv,
         qc_pass_mt_uri=qc_pass_mt_uri,
         count_variant_rows=count_variant_rows,
+        count_qc_rows=count_qc_rows,
     )
 
 
