@@ -419,6 +419,9 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertTrue(hwe_args.skip_variant_row_counts)
         self.assertEqual(hwe_args.results_preview_n, 250000)
 
+        no_preview_args = parser.parse_args(["run-hail-pilot-gwas", "--results-preview-n", "0"])
+        self.assertEqual(no_preview_args.results_preview_n, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

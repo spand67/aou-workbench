@@ -33,7 +33,7 @@ HWE_FILTER_MODE="${HWE_FILTER_MODE:-report-only}"
 ANALYSIS_SPLIT="${ANALYSIS_SPLIT:-train}"
 ELIGIBILITY_FLAG="${ELIGIBILITY_FLAG:-primary_model_eligible}"
 SMOKE_PREVIEW_N="${SMOKE_PREVIEW_N:-250000}"
-AUTOSOME_PREVIEW_N="${AUTOSOME_PREVIEW_N:-500000}"
+AUTOSOME_PREVIEW_N="${AUTOSOME_PREVIEW_N:-0}"
 
 slugify_label() {
   echo "$1" | tr '[:upper:]_' '[:lower:]-' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g'

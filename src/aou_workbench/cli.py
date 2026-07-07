@@ -527,7 +527,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--results-preview-n",
         type=int,
         default=100000,
-        help="Number of top p-value results to collect locally for preview plots/tables. Default: 100000.",
+        help=(
+            "Number of top p-value results to collect locally for preview plots/tables. "
+            "Use 0 to skip the local preview/global sort and write only Hail-native results. Default: 100000."
+        ),
     )
 
     microarray_plink_parser = subparsers.add_parser(

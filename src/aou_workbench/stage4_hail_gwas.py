@@ -723,18 +723,27 @@ def _postprocess_pilot_hail_results(
         print(f"Exporting full Hail GWAS results TSV shards to {results_tsv_uri}", flush=True)
         result_source.export(results_tsv_uri, parallel="separate_header")
 
-    preview_n = max(1, int(results_preview_n))
-    preview_source = result_source.filter(hl.is_defined(result_source.regression_p))
-    preview_rows = preview_source.order_by(preview_source.regression_p).take(preview_n)
-    preview = _coerce_hail_result_frame(_hail_rows_to_dataframe(preview_rows))
-    preview_is_full = int(n_variants_tested) <= preview_n
-    if not preview.empty:
-        preview = preview.sort_values(["regression_p", "variant_id"]).reset_index(drop=True)
-        if preview_is_full:
-            preview["fdr_q"] = bh_fdr(preview["regression_p"].values)
-        else:
-            preview["fdr_q"] = np.nan
-        preview["minus_log10_p"] = -np.log10(preview["regression_p"].clip(lower=1e-300))
+    preview_n = int(results_preview_n)
+    preview = pd.DataFrame()
+    preview_is_full = False
+    if preview_n > 0:
+        preview_source = result_source.filter(hl.is_defined(result_source.regression_p))
+        preview_rows = preview_source.order_by(preview_source.regression_p).take(preview_n)
+        preview = _coerce_hail_result_frame(_hail_rows_to_dataframe(preview_rows))
+        preview_is_full = int(n_variants_tested) <= preview_n
+        if not preview.empty:
+            preview = preview.sort_values(["regression_p", "variant_id"]).reset_index(drop=True)
+            if preview_is_full:
+                preview["fdr_q"] = bh_fdr(preview["regression_p"].values)
+            else:
+                preview["fdr_q"] = np.nan
+            preview["minus_log10_p"] = -np.log10(preview["regression_p"].clip(lower=1e-300))
+    else:
+        print(
+            "Skipping local Hail GWAS preview collection because --results-preview-n <= 0. "
+            "Full results remain available in the Hail Table.",
+            flush=True,
+        )
 
     lead_hits = _lead_hit_subset(preview, stage.lead_hit_window_bp)
     write_dataframe(preview, hail_pilot_results_preview_path(paths, label))
@@ -766,6 +775,7 @@ def _postprocess_pilot_hail_results(
             "lambda_gc": lambda_gc,
             "local_results_preview_rows": int(preview.shape[0]),
             "local_results_preview_is_full": bool(preview_is_full),
+            "local_results_preview_skipped": bool(preview_n <= 0),
             "variant_row_counts_skipped": not bool(count_variant_rows),
             "min_maf": float(min_maf),
             "min_mac": int(min_mac),
@@ -800,7 +810,9 @@ def _postprocess_pilot_hail_results(
             f"- Variants tested after QC: {n_variants_tested}",
             f"- Lead hits in preview: {lead_hits.shape[0]}",
             (
-                f"- Local results preview: top {preview.shape[0]} variants by p-value"
+                "- Local results preview: skipped; full output is Hail-native"
+                if preview_n <= 0
+                else f"- Local results preview: top {preview.shape[0]} variants by p-value"
                 + (" (full chromosome output)" if preview_is_full else " (bounded preview; full output is Hail-native)")
             ),
             f"- Variant QC: MAF >= {min_maf}, MAC >= {min_mac}, call rate >= {min_call_rate}, control HWE p >= {hwe_p_control} ({hwe_filter_mode})",
