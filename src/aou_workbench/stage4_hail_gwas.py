@@ -278,23 +278,28 @@ def _pilot_case_control_definition_mask(sample: pd.DataFrame, outcome_column: st
     return case_mask | control_mask
 
 
-def _qc_row(name: str, threshold: str, before: int, after: int) -> dict[str, object]:
-    before_int = int(before)
-    after_int = int(after)
+def _qc_count(value: int | None) -> int | None:
+    return None if value is None else int(value)
+
+
+def _qc_row(name: str, threshold: str, before: int | None, after: int | None) -> dict[str, object]:
+    before_int = _qc_count(before)
+    after_int = _qc_count(after)
+    removed = before_int - after_int if before_int is not None and after_int is not None else None
     return {
         "filter": name,
         "threshold": threshold,
         "rows_before": before_int,
         "rows_after": after_int,
-        "rows_removed": before_int - after_int,
+        "rows_removed": removed,
     }
 
 
 def _variant_qc_summary_rows(
     *,
     chromosomes: list[str],
-    initial_rows: int,
-    biallelic_rows: int,
+    initial_rows: int | None,
+    biallelic_rows: int | None,
     maf_rows: int,
     mac_rows: int,
     call_rate_rows: int,
@@ -688,6 +693,7 @@ def _postprocess_pilot_hail_results(
     results_preview_n: int,
     export_hail_results_tsv: bool,
     qc_pass_mt_uri: str | None,
+    count_variant_rows: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     stage = config.analysis.stage4
     if stage is None:
@@ -753,6 +759,7 @@ def _postprocess_pilot_hail_results(
             "lambda_gc": lambda_gc,
             "local_results_preview_rows": int(preview.shape[0]),
             "local_results_preview_is_full": bool(preview_is_full),
+            "variant_row_counts_skipped": not bool(count_variant_rows),
             "min_maf": float(min_maf),
             "min_mac": int(min_mac),
             "min_call_rate": float(min_call_rate),
@@ -942,6 +949,7 @@ def run_stage4_hail_pilot_gwas(
     write_qc_mt: bool = False,
     export_hail_results_tsv: bool = False,
     results_preview_n: int = 100_000,
+    count_variant_rows: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     stage = config.analysis.stage4
     if stage is None:
@@ -1049,23 +1057,28 @@ def run_stage4_hail_pilot_gwas(
         & bases.contains(mt.alleles[0])
         & bases.contains(mt.alleles[1])
     )
-    print("Counting variant rows and autosomal biallelic SNP rows.", flush=True)
-    row_ht = mt.rows()
-    row_biallelic_snp = (
-        (hl.len(row_ht.alleles) == 2)
-        & (hl.len(row_ht.alleles[0]) == 1)
-        & (hl.len(row_ht.alleles[1]) == 1)
-        & bases.contains(row_ht.alleles[0])
-        & bases.contains(row_ht.alleles[1])
-    )
-    row_counts = row_ht.aggregate(
-        hl.struct(
-            initial=hl.agg.count(),
-            biallelic=hl.agg.count_where(row_biallelic_snp),
+    initial_rows: int | None = None
+    biallelic_rows: int | None = None
+    if count_variant_rows:
+        print("Counting variant rows and autosomal biallelic SNP rows.", flush=True)
+        row_ht = mt.rows()
+        row_biallelic_snp = (
+            (hl.len(row_ht.alleles) == 2)
+            & (hl.len(row_ht.alleles[0]) == 1)
+            & (hl.len(row_ht.alleles[1]) == 1)
+            & bases.contains(row_ht.alleles[0])
+            & bases.contains(row_ht.alleles[1])
         )
-    )
-    initial_rows = int(row_counts.initial)
-    biallelic_rows = int(row_counts.biallelic)
+        row_counts = row_ht.aggregate(
+            hl.struct(
+                initial=hl.agg.count(),
+                biallelic=hl.agg.count_where(row_biallelic_snp),
+            )
+        )
+        initial_rows = int(row_counts.initial)
+        biallelic_rows = int(row_counts.biallelic)
+    else:
+        print("Skipping variant row-count pass; early QC denominator rows will be blank.", flush=True)
     mt = mt.filter_rows(biallelic_snp)
     gt_expr = _matrix_table_gt(mt, hl)
     mt = mt.select_entries(_GT=gt_expr)
@@ -1222,6 +1235,7 @@ def run_stage4_hail_pilot_gwas(
         results_preview_n=results_preview_n,
         export_hail_results_tsv=export_hail_results_tsv,
         qc_pass_mt_uri=qc_pass_mt_uri,
+        count_variant_rows=count_variant_rows,
     )
 
 

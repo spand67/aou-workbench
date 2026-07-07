@@ -509,6 +509,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional row partition count after interval/sample/biallelic filtering. Default: source-specific.",
     )
     hail_pilot_parser.add_argument(
+        "--skip-variant-row-counts",
+        action="store_true",
+        help="Skip the separate pre-QC variant/biallelic row-count pass. Faster, but early QC denominator rows are blank.",
+    )
+    hail_pilot_parser.add_argument(
         "--write-qc-mt",
         action="store_true",
         help="Write the QC-passing genotype MatrixTable to the workspace bucket and run GWAS from that persisted MT.",
@@ -1204,6 +1209,7 @@ def main(argv: list[str] | None = None) -> int:
             write_qc_mt=args.write_qc_mt,
             export_hail_results_tsv=args.export_hail_results_tsv,
             results_preview_n=args.results_preview_n,
+            count_variant_rows=not args.skip_variant_row_counts,
         )
         print(f"Hail pilot GWAS preview rows: {full.shape[0]}")
         print(f"Hail pilot GWAS lead hits: {hits.shape[0]}")

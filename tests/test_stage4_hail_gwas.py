@@ -271,6 +271,29 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertEqual(summary["rows_after"].tolist()[-2:], [50, 70])
         self.assertEqual(summary["rows_removed"].tolist()[-2:], [20, 0])
 
+    def test_variant_qc_summary_rows_allow_skipped_denominator_counts(self) -> None:
+        rows = _variant_qc_summary_rows(
+            chromosomes=["19"],
+            initial_rows=None,
+            biallelic_rows=None,
+            maf_rows=1000,
+            mac_rows=900,
+            call_rate_rows=850,
+            hwe_rows=800,
+            min_maf=0.01,
+            min_mac=20,
+            min_call_rate=0.98,
+            hwe_p_control=1e-6,
+        )
+        summary = pd.DataFrame(rows)
+
+        self.assertTrue(summary.loc[summary["filter"].eq("interval_and_sample_restriction"), "rows_after"].isna().all())
+        self.assertTrue(summary.loc[summary["filter"].eq("autosomal_biallelic_snp"), "rows_after"].isna().all())
+        self.assertEqual(
+            int(summary.loc[summary["filter"].eq("minor_allele_count"), "rows_removed"].iloc[0]),
+            100,
+        )
+
     def test_hail_pilot_paths_are_labeled_and_do_not_overwrite_stage4(self) -> None:
         paths = build_demo_project_tree()
         config = load_project_config(
@@ -324,6 +347,7 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertIsNone(args.target_partitions)
         self.assertFalse(args.write_qc_mt)
         self.assertFalse(args.export_hail_results_tsv)
+        self.assertFalse(args.skip_variant_row_counts)
         self.assertEqual(args.results_preview_n, 100000)
 
         microarray_args = parser.parse_args(
@@ -339,6 +363,7 @@ class Stage4HailGwasTests(unittest.TestCase):
                 "report-only",
                 "--write-qc-mt",
                 "--export-hail-results-tsv",
+                "--skip-variant-row-counts",
                 "--results-preview-n",
                 "250000",
             ]
@@ -346,6 +371,7 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertEqual(hwe_args.hwe_filter_mode, "report-only")
         self.assertTrue(hwe_args.write_qc_mt)
         self.assertTrue(hwe_args.export_hail_results_tsv)
+        self.assertTrue(hwe_args.skip_variant_row_counts)
         self.assertEqual(hwe_args.results_preview_n, 250000)
 
 
