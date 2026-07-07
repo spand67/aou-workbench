@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from .svg import write_manhattan_svg, write_qq_svg
 PILOT_COVARIATES = ("age_at_index", "is_female", "pc1", "pc2", "pc3", "pc4", "pc5")
 PILOT_CASE_CONTROL_REQUIRED_COLUMNS = ("match_group_id", "case_tier", "eligible_control")
 PILOT_GENOTYPE_SOURCES = ("acaf", "microarray")
+PILOT_HWE_FILTER_MODES = ("filter", "report-only")
 
 
 def hail_stage4_full_results_path(paths: ProjectPaths) -> str:
@@ -55,6 +57,10 @@ def hail_pilot_results_path(paths: ProjectPaths, label: str) -> str:
     return join_path(hail_pilot_output_dir(paths, label), "gwas_results.tsv")
 
 
+def hail_pilot_results_preview_path(paths: ProjectPaths, label: str) -> str:
+    return join_path(hail_pilot_output_dir(paths, label), "gwas_results_preview.tsv")
+
+
 def hail_pilot_lead_hits_path(paths: ProjectPaths, label: str) -> str:
     return join_path(hail_pilot_output_dir(paths, label), "lead_hits.tsv")
 
@@ -77,6 +83,42 @@ def hail_pilot_qq_path(paths: ProjectPaths, label: str) -> str:
 
 def hail_pilot_report_path(paths: ProjectPaths, label: str) -> str:
     return join_path(hail_pilot_output_dir(paths, label), "report.md")
+
+
+def _workspace_bucket(config: ProjectConfig) -> str | None:
+    bucket = config.workbench.workspace_bucket or os.getenv("WORKSPACE_BUCKET")
+    if not bucket:
+        return None
+    return bucket if bucket.startswith("gs://") else f"gs://{bucket}"
+
+
+def hail_pilot_hail_output_dir(config: ProjectConfig, label: str) -> str | None:
+    bucket = _workspace_bucket(config)
+    if not bucket:
+        return None
+    return join_path(
+        bucket,
+        "aou-workbench",
+        config.analysis.analysis_slug,
+        "stage4",
+        "hail_pilot",
+        slugify(label),
+    )
+
+
+def hail_pilot_results_ht_uri(config: ProjectConfig, label: str) -> str | None:
+    root = hail_pilot_hail_output_dir(config, label)
+    return join_path(root, "gwas_results.ht") if root else None
+
+
+def hail_pilot_results_tsv_uri(config: ProjectConfig, label: str) -> str | None:
+    root = hail_pilot_hail_output_dir(config, label)
+    return join_path(root, "gwas_results.tsv.bgz") if root else None
+
+
+def hail_pilot_qc_pass_mt_uri(config: ProjectConfig, label: str) -> str | None:
+    root = hail_pilot_hail_output_dir(config, label)
+    return join_path(root, "qc_pass_genotypes.mt") if root else None
 
 
 def _split_acaf_mt_path(path: str) -> str:
@@ -105,6 +147,13 @@ def _normalize_genotype_source(genotype_source: str) -> str:
     if source not in PILOT_GENOTYPE_SOURCES:
         raise ValueError(f"Unsupported Hail pilot genotype source `{genotype_source}`; expected one of: {', '.join(PILOT_GENOTYPE_SOURCES)}")
     return source
+
+
+def _normalize_hwe_filter_mode(hwe_filter_mode: str) -> str:
+    mode = hwe_filter_mode.strip().lower()
+    if mode not in PILOT_HWE_FILTER_MODES:
+        raise ValueError(f"Unsupported HWE filter mode `{hwe_filter_mode}`; expected one of: {', '.join(PILOT_HWE_FILTER_MODES)}")
+    return mode
 
 
 def _pilot_genotype_mt_path(config: ProjectConfig, genotype_source: str) -> str:
@@ -254,15 +303,30 @@ def _variant_qc_summary_rows(
     min_mac: int,
     min_call_rate: float,
     hwe_p_control: float,
+    hwe_filter_mode: str = "filter",
+    final_rows: int | None = None,
 ) -> list[dict[str, object]]:
-    return [
+    mode = _normalize_hwe_filter_mode(hwe_filter_mode)
+    rows = [
         _qc_row("interval_and_sample_restriction", ",".join(chromosomes), initial_rows, initial_rows),
         _qc_row("autosomal_biallelic_snp", "biallelic A/C/G/T SNP", initial_rows, biallelic_rows),
         _qc_row("maf", f">= {min_maf}", biallelic_rows, maf_rows),
         _qc_row("minor_allele_count", f">= {int(min_mac)}", maf_rows, mac_rows),
         _qc_row("call_rate", f">= {min_call_rate}", mac_rows, call_rate_rows),
-        _qc_row("control_hwe_p", f">= {hwe_p_control}", call_rate_rows, hwe_rows),
     ]
+    if mode == "filter":
+        rows.append(_qc_row("control_hwe_p", f">= {hwe_p_control}", call_rate_rows, hwe_rows))
+    else:
+        rows.append(
+            _qc_row(
+                "control_hwe_p_report_only",
+                f"reported only; >= {hwe_p_control} would pass",
+                call_rate_rows,
+                hwe_rows,
+            )
+        )
+        rows.append(_qc_row("final_qc", "HWE not applied as a hard filter", call_rate_rows, final_rows if final_rows is not None else call_rate_rows))
+    return rows
 
 
 def _hail_sample_frame(
@@ -563,6 +627,184 @@ def _postprocess_pilot_results(
     return full, lead_hits
 
 
+def _hail_rows_to_dataframe(rows: list[Any]) -> pd.DataFrame:
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        if hasattr(row, "asdict"):
+            records.append(row.asdict())
+        else:
+            records.append(dict(row))
+    return pd.DataFrame.from_records(records)
+
+
+def _coerce_hail_result_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    frame = frame.copy()
+    if "chromosome" in frame.columns:
+        frame["chromosome"] = frame["chromosome"].astype(str).str.replace("chr", "", regex=False)
+    for column in (
+        "position",
+        "regression_p",
+        "beta",
+        "se",
+        "odds_ratio",
+        "maf",
+        "minor_allele_count",
+        "call_rate",
+        "hwe_control_p",
+        "hwe_case_p",
+        "n_samples",
+    ):
+        if column in frame.columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
+def _postprocess_pilot_hail_results(
+    result_ht: Any,
+    hl: Any,
+    variant_qc_summary: pd.DataFrame,
+    config: ProjectConfig,
+    paths: ProjectPaths,
+    *,
+    label: str,
+    chromosomes: list[str],
+    analysis_split: str,
+    eligibility_flag: str,
+    min_maf: float,
+    min_mac: int,
+    min_call_rate: float,
+    hwe_p_control: float,
+    hwe_filter_mode: str,
+    target_partitions: int,
+    sample_counts: dict[str, int],
+    wgs_manifest_used: bool,
+    genotype_source: str,
+    genotype_mt_path: str,
+    covariates_used: list[str],
+    dropped_covariates: list[str],
+    n_variants_tested: int,
+    results_preview_n: int,
+    export_hail_results_tsv: bool,
+    qc_pass_mt_uri: str | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    stage = config.analysis.stage4
+    if stage is None:
+        return pd.DataFrame(), pd.DataFrame()
+
+    results_ht_uri = hail_pilot_results_ht_uri(config, label)
+    results_tsv_uri = hail_pilot_results_tsv_uri(config, label)
+    if not results_ht_uri:
+        raise RuntimeError(
+            "Hail pilot GWAS needs a writable workspace bucket for scalable Hail-native output. "
+            "Set WORKSPACE_BUCKET or workspace_bucket in configs/workbench.yaml."
+        )
+
+    print(f"Writing full Hail GWAS results table to {results_ht_uri}", flush=True)
+    result_ht.write(results_ht_uri, overwrite=True)
+    result_source = hl.read_table(results_ht_uri)
+    if export_hail_results_tsv:
+        if not results_tsv_uri:
+            raise RuntimeError("Could not resolve Hail GWAS TSV export URI.")
+        print(f"Exporting full Hail GWAS results TSV shards to {results_tsv_uri}", flush=True)
+        result_source.export(results_tsv_uri, parallel="separate_header")
+
+    preview_n = max(1, int(results_preview_n))
+    preview_source = result_source.filter(hl.is_defined(result_source.regression_p))
+    preview_rows = preview_source.order_by(preview_source.regression_p).take(preview_n)
+    preview = _coerce_hail_result_frame(_hail_rows_to_dataframe(preview_rows))
+    preview_is_full = int(n_variants_tested) <= preview_n
+    if not preview.empty:
+        preview = preview.sort_values(["regression_p", "variant_id"]).reset_index(drop=True)
+        if preview_is_full:
+            preview["fdr_q"] = bh_fdr(preview["regression_p"].values)
+        else:
+            preview["fdr_q"] = np.nan
+        preview["minus_log10_p"] = -np.log10(preview["regression_p"].clip(lower=1e-300))
+
+    lead_hits = _lead_hit_subset(preview, stage.lead_hit_window_bp)
+    write_dataframe(preview, hail_pilot_results_preview_path(paths, label))
+    if preview_is_full:
+        write_dataframe(preview, hail_pilot_results_path(paths, label))
+    write_dataframe(lead_hits, hail_pilot_lead_hits_path(paths, label))
+    write_dataframe(variant_qc_summary, hail_pilot_variant_qc_summary_path(paths, label))
+    if not preview.empty:
+        write_manhattan_svg(preview, hail_pilot_manhattan_path(paths, label))
+        write_qq_svg(preview, hail_pilot_qq_path(paths, label))
+
+    lambda_gc = genomic_control_lambda(preview["regression_p"].values) if preview_is_full and not preview.empty else None
+    write_json(
+        {
+            "pilot_label": label,
+            "genotype_source": genotype_source,
+            "genotype_mt_path": genotype_mt_path,
+            "hail_results_ht_uri": results_ht_uri,
+            "hail_results_tsv_uri": results_tsv_uri if export_hail_results_tsv else None,
+            "qc_pass_mt_uri": qc_pass_mt_uri,
+            "acaf_mt_path": _split_acaf_mt_path(config.workbench.acaf_mt_path),
+            "chromosomes_tested": chromosomes,
+            "analysis_split": analysis_split,
+            "eligibility_flag": eligibility_flag,
+            "wgs_manifest_used": wgs_manifest_used,
+            "sample_counts": sample_counts,
+            "n_variants_tested": int(n_variants_tested),
+            "n_lead_hits": int(lead_hits.shape[0]),
+            "lambda_gc": lambda_gc,
+            "local_results_preview_rows": int(preview.shape[0]),
+            "local_results_preview_is_full": bool(preview_is_full),
+            "min_maf": float(min_maf),
+            "min_mac": int(min_mac),
+            "min_call_rate": float(min_call_rate),
+            "hwe_p_control": float(hwe_p_control),
+            "hwe_filter_mode": hwe_filter_mode,
+            "target_partitions": int(target_partitions),
+            "covariates_used": covariates_used,
+            "dropped_covariates": dropped_covariates,
+        },
+        hail_pilot_qc_path(paths, label),
+    )
+    write_stage_report(
+        title="Stage 4: Hail Pilot GWAS",
+        summary_lines=[
+            f"- Pilot label: {label}",
+            f"- Genotype source: {genotype_source}",
+            f"- Genotype MatrixTable: {genotype_mt_path}",
+            f"- Full Hail results table: {results_ht_uri}",
+            f"- QC-passing genotype MatrixTable: {qc_pass_mt_uri or 'not written'}",
+            "- Case-control definition: broad rhabdomyolysis cases versus matched eligible controls",
+            f"- Analysis split: {analysis_split}",
+            f"- Eligibility flag: {eligibility_flag}",
+            f"- Chromosomes: {', '.join(chromosomes)}",
+            f"- Complete-case samples analyzed: {sample_counts.get('after_complete_case_participants', 0)}",
+            (
+                "- Complete-case cases/controls: "
+                f"{sample_counts.get('after_complete_case_cases', 0)} / "
+                f"{sample_counts.get('after_complete_case_controls', 0)}"
+            ),
+            f"- MatrixTable samples analyzed: {sample_counts.get('matrix_table_participants', 0)}",
+            f"- Variants tested after QC: {n_variants_tested}",
+            f"- Lead hits in preview: {lead_hits.shape[0]}",
+            (
+                f"- Local results preview: top {preview.shape[0]} variants by p-value"
+                + (" (full chromosome output)" if preview_is_full else " (bounded preview; full output is Hail-native)")
+            ),
+            f"- Variant QC: MAF >= {min_maf}, MAC >= {min_mac}, call rate >= {min_call_rate}, control HWE p >= {hwe_p_control} ({hwe_filter_mode})",
+            f"- Target row partitions after interval/sample/biallelic filtering: {target_partitions or 'source default/no repartition'}",
+            f"- Covariates: {', '.join(covariates_used) if covariates_used else 'intercept only'}",
+            (
+                f"- Dropped unstable covariates: {', '.join(dropped_covariates)}"
+                if dropped_covariates
+                else "- Dropped unstable covariates: none"
+            ),
+        ],
+        preview_df=lead_hits if not lead_hits.empty else preview,
+        preview_columns=["variant_id", "chromosome", "position", "regression_p", "fdr_q", "beta", "odds_ratio"],
+        path=hail_pilot_report_path(paths, label),
+    )
+    return preview, lead_hits
+
+
 def run_stage4_hail_gwas(
     config: ProjectConfig,
     matched_df: pd.DataFrame,
@@ -696,12 +938,17 @@ def run_stage4_hail_pilot_gwas(
     label: str | None = None,
     genotype_source: str = "acaf",
     target_partitions: int | None = None,
+    hwe_filter_mode: str = "filter",
+    write_qc_mt: bool = False,
+    export_hail_results_tsv: bool = False,
+    results_preview_n: int = 100_000,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     stage = config.analysis.stage4
     if stage is None:
         return pd.DataFrame(), pd.DataFrame()
 
     source = _normalize_genotype_source(genotype_source)
+    hwe_mode = _normalize_hwe_filter_mode(hwe_filter_mode)
     chromosome_values = _normalize_autosomal_chromosomes(chromosomes or ["22"])
     label = label or hail_pilot_default_label(source, chromosome_values, min_maf=min_maf)
     genotype_mt_path = _pilot_genotype_mt_path(config, source)
@@ -862,14 +1109,16 @@ def run_stage4_hail_pilot_gwas(
     maf_filter = hl.is_defined(mt.maf) & (mt.maf >= float(min_maf))
     mac_filter = maf_filter & hl.is_defined(mt.minor_allele_count) & (mt.minor_allele_count >= int(min_mac))
     call_rate_filter = mac_filter & hl.is_defined(mt.call_rate) & (mt.call_rate >= float(min_call_rate))
-    final_qc_filter = call_rate_filter & hl.is_defined(mt.hwe_control_p) & (mt.hwe_control_p >= float(hwe_p_control))
+    hwe_pass_filter = call_rate_filter & hl.is_defined(mt.hwe_control_p) & (mt.hwe_control_p >= float(hwe_p_control))
+    final_qc_filter = hwe_pass_filter if hwe_mode == "filter" else call_rate_filter
     print("Computing cumulative variant QC counts.", flush=True)
     qc_counts = mt.aggregate_rows(
         hl.struct(
             maf=hl.agg.count_where(maf_filter),
             mac=hl.agg.count_where(mac_filter),
             call_rate=hl.agg.count_where(call_rate_filter),
-            hwe=hl.agg.count_where(final_qc_filter),
+            hwe=hl.agg.count_where(hwe_pass_filter),
+            final=hl.agg.count_where(final_qc_filter),
         )
     )
     qc_rows = _variant_qc_summary_rows(
@@ -884,6 +1133,8 @@ def run_stage4_hail_pilot_gwas(
         min_mac=min_mac,
         min_call_rate=min_call_rate,
         hwe_p_control=hwe_p_control,
+        hwe_filter_mode=hwe_mode,
+        final_rows=int(qc_counts.final),
     )
     mt = mt.filter_rows(final_qc_filter)
     mt = mt.annotate_rows(
@@ -895,6 +1146,16 @@ def run_stage4_hail_pilot_gwas(
     mt = mt.annotate_rows(
         hwe_case_p=mt.hwe_case.p_value,
     )
+    qc_pass_mt_uri = None
+    if write_qc_mt:
+        qc_pass_mt_uri = hail_pilot_qc_pass_mt_uri(config, label)
+        if not qc_pass_mt_uri:
+            raise RuntimeError(
+                "Writing the QC-passing Hail MatrixTable requires WORKSPACE_BUCKET or workspace_bucket."
+            )
+        print(f"Writing QC-passing genotype MatrixTable to {qc_pass_mt_uri}", flush=True)
+        mt.write(qc_pass_mt_uri, overwrite=True)
+        mt = hl.read_matrix_table(qc_pass_mt_uri)
 
     print(
         "Running Hail pilot GWAS on "
@@ -932,27 +1193,12 @@ def run_stage4_hail_pilot_gwas(
         regression_p=result_ht.p_value,
         odds_ratio=hl.exp(result_ht.beta),
     )
-    result_df = result_ht.to_pandas()
-    if not result_df.empty:
-        result_df["chromosome"] = result_df["chromosome"].astype(str).str.replace("chr", "", regex=False)
-        for column in (
-            "position",
-            "regression_p",
-            "beta",
-            "se",
-            "odds_ratio",
-            "maf",
-            "minor_allele_count",
-            "call_rate",
-            "hwe_control_p",
-            "hwe_case_p",
-        ):
-            result_df[column] = pd.to_numeric(result_df[column], errors="coerce")
-        result_df["n_samples"] = matrix_table_participants
+    result_ht = result_ht.annotate(n_samples=matrix_table_participants)
 
     variant_qc_summary = pd.DataFrame(qc_rows)
-    return _postprocess_pilot_results(
-        result_df,
+    return _postprocess_pilot_hail_results(
+        result_ht,
+        hl,
         variant_qc_summary,
         config,
         paths,
@@ -964,6 +1210,7 @@ def run_stage4_hail_pilot_gwas(
         min_mac=min_mac,
         min_call_rate=min_call_rate,
         hwe_p_control=hwe_p_control,
+        hwe_filter_mode=hwe_mode,
         target_partitions=effective_target_partitions,
         sample_counts=sample_counts,
         wgs_manifest_used=wgs_manifest_used,
@@ -971,11 +1218,16 @@ def run_stage4_hail_pilot_gwas(
         genotype_mt_path=genotype_mt_path,
         covariates_used=hail_covariates,
         dropped_covariates=dropped_covariates,
+        n_variants_tested=int(qc_counts.final),
+        results_preview_n=results_preview_n,
+        export_hail_results_tsv=export_hail_results_tsv,
+        qc_pass_mt_uri=qc_pass_mt_uri,
     )
 
 
 __all__ = [
     "PILOT_COVARIATES",
+    "PILOT_HWE_FILTER_MODES",
     "hail_stage4_full_results_path",
     "hail_stage4_lead_hits_path",
     "hail_stage4_manhattan_path",
@@ -983,13 +1235,18 @@ __all__ = [
     "hail_stage4_qq_path",
     "hail_stage4_report_path",
     "hail_pilot_lead_hits_path",
+    "hail_pilot_hail_output_dir",
     "hail_pilot_manhattan_path",
     "hail_pilot_output_dir",
+    "hail_pilot_qc_pass_mt_uri",
     "hail_pilot_qc_path",
     "hail_pilot_default_label",
     "hail_pilot_qq_path",
     "hail_pilot_report_path",
+    "hail_pilot_results_ht_uri",
     "hail_pilot_results_path",
+    "hail_pilot_results_preview_path",
+    "hail_pilot_results_tsv_uri",
     "hail_pilot_variant_qc_summary_path",
     "run_stage4_hail_gwas",
     "run_stage4_hail_pilot_gwas",

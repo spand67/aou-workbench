@@ -22,7 +22,9 @@ from aou_workbench.stage4_hail_gwas import (
     _pilot_default_target_partitions,
     _pilot_restricts_to_wgs_manifest,
     _variant_qc_summary_rows,
+    hail_pilot_qc_pass_mt_uri,
     hail_pilot_default_label,
+    hail_pilot_results_ht_uri,
     hail_pilot_results_path,
 )
 from tests.support import build_demo_project_tree
@@ -247,6 +249,28 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertEqual(summary["rows_after"].tolist(), [100, 90, 80, 75, 70, 60])
         self.assertEqual(summary["rows_removed"].tolist(), [0, 10, 10, 5, 5, 10])
 
+    def test_variant_qc_summary_rows_can_report_hwe_without_filtering(self) -> None:
+        rows = _variant_qc_summary_rows(
+            chromosomes=["19"],
+            initial_rows=100,
+            biallelic_rows=90,
+            maf_rows=80,
+            mac_rows=75,
+            call_rate_rows=70,
+            hwe_rows=50,
+            final_rows=70,
+            min_maf=0.01,
+            min_mac=20,
+            min_call_rate=0.98,
+            hwe_p_control=1e-6,
+            hwe_filter_mode="report-only",
+        )
+        summary = pd.DataFrame(rows)
+
+        self.assertEqual(summary["filter"].tolist()[-2:], ["control_hwe_p_report_only", "final_qc"])
+        self.assertEqual(summary["rows_after"].tolist()[-2:], [50, 70])
+        self.assertEqual(summary["rows_removed"].tolist()[-2:], [20, 0])
+
     def test_hail_pilot_paths_are_labeled_and_do_not_overwrite_stage4(self) -> None:
         paths = build_demo_project_tree()
         config = load_project_config(
@@ -262,6 +286,26 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertIn("/stage4/hail_pilot/acaf-chr22-maf05-train-qc/gwas_results.tsv", pilot_path)
         self.assertNotEqual(pilot_path, output_paths.stage4_full_results_tsv)
 
+    def test_hail_pilot_gcs_paths_use_workspace_bucket(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+        config = replace(config, workbench=replace(config.workbench, workspace_bucket="gs://example-bucket"))
+
+        self.assertEqual(
+            hail_pilot_results_ht_uri(config, "acaf_chr19_ryr1_maf01"),
+            "gs://example-bucket/aou-workbench/unit-test-rhabdo/stage4/hail_pilot/acaf-chr19-ryr1-maf01/gwas_results.ht",
+        )
+        self.assertEqual(
+            hail_pilot_qc_pass_mt_uri(config, "acaf_chr19_ryr1_maf01"),
+            "gs://example-bucket/aou-workbench/unit-test-rhabdo/stage4/hail_pilot/acaf-chr19-ryr1-maf01/qc_pass_genotypes.mt",
+        )
+
     def test_hail_pilot_cli_defaults_match_guidance_qc(self) -> None:
         parser = _build_parser()
         args = parser.parse_args(["run-hail-pilot-gwas"])
@@ -272,17 +316,37 @@ class Stage4HailGwasTests(unittest.TestCase):
         self.assertEqual(args.min_mac, 20)
         self.assertEqual(args.min_call_rate, 0.98)
         self.assertEqual(args.hwe_p_control, 1e-6)
+        self.assertEqual(args.hwe_filter_mode, "filter")
         self.assertEqual(args.analysis_split, "train")
         self.assertEqual(args.eligibility_flag, "primary_model_eligible")
         self.assertEqual(args.genotype_source, "acaf")
         self.assertIsNone(args.label)
         self.assertIsNone(args.target_partitions)
+        self.assertFalse(args.write_qc_mt)
+        self.assertFalse(args.export_hail_results_tsv)
+        self.assertEqual(args.results_preview_n, 100000)
 
         microarray_args = parser.parse_args(
             ["run-hail-pilot-gwas", "--genotype-source", "microarray", "--target-partitions", "96"]
         )
         self.assertEqual(microarray_args.genotype_source, "microarray")
         self.assertEqual(microarray_args.target_partitions, 96)
+
+        hwe_args = parser.parse_args(
+            [
+                "run-hail-pilot-gwas",
+                "--hwe-filter-mode",
+                "report-only",
+                "--write-qc-mt",
+                "--export-hail-results-tsv",
+                "--results-preview-n",
+                "250000",
+            ]
+        )
+        self.assertEqual(hwe_args.hwe_filter_mode, "report-only")
+        self.assertTrue(hwe_args.write_qc_mt)
+        self.assertTrue(hwe_args.export_hail_results_tsv)
+        self.assertEqual(hwe_args.results_preview_n, 250000)
 
 
 if __name__ == "__main__":

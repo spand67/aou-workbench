@@ -160,13 +160,17 @@ from .stage1_prior_variants import run_stage1_prior_variants
 from .stage2_prepare import prepare_stage2_variant_table
 from .stage2_plp_panel import run_stage2_plp_panel
 from .stage4_hail_gwas import (
+    hail_pilot_qc_pass_mt_uri,
     hail_pilot_lead_hits_path,
     hail_pilot_manhattan_path,
     hail_pilot_qc_path,
     hail_pilot_default_label,
     hail_pilot_qq_path,
     hail_pilot_report_path,
+    hail_pilot_results_ht_uri,
+    hail_pilot_results_preview_path,
     hail_pilot_results_path,
+    hail_pilot_results_tsv_uri,
     hail_pilot_variant_qc_summary_path,
     hail_stage4_full_results_path,
     hail_stage4_lead_hits_path,
@@ -478,6 +482,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Minimum Hardy-Weinberg equilibrium p-value among controls. Default: 1e-6.",
     )
     hail_pilot_parser.add_argument(
+        "--hwe-filter-mode",
+        choices=["filter", "report-only"],
+        default="filter",
+        help="Use control-HWE as a hard filter or report it without filtering. Default: filter.",
+    )
+    hail_pilot_parser.add_argument(
         "--analysis-split",
         default="train",
         help="Matched cohort analysis_split to use. Default: train.",
@@ -497,6 +507,22 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Optional row partition count after interval/sample/biallelic filtering. Default: source-specific.",
+    )
+    hail_pilot_parser.add_argument(
+        "--write-qc-mt",
+        action="store_true",
+        help="Write the QC-passing genotype MatrixTable to the workspace bucket and run GWAS from that persisted MT.",
+    )
+    hail_pilot_parser.add_argument(
+        "--export-hail-results-tsv",
+        action="store_true",
+        help="Also export full Hail GWAS results as sharded TSV in the workspace bucket. The Hail Table is always written.",
+    )
+    hail_pilot_parser.add_argument(
+        "--results-preview-n",
+        type=int,
+        default=100000,
+        help="Number of top p-value results to collect locally for preview plots/tables. Default: 100000.",
     )
 
     microarray_plink_parser = subparsers.add_parser(
@@ -1169,15 +1195,25 @@ def main(argv: list[str] | None = None) -> int:
             min_mac=args.min_mac,
             min_call_rate=args.min_call_rate,
             hwe_p_control=args.hwe_p_control,
+            hwe_filter_mode=args.hwe_filter_mode,
             analysis_split=args.analysis_split,
             eligibility_flag=args.eligibility_flag,
             label=label,
             genotype_source=args.genotype_source,
             target_partitions=args.target_partitions,
+            write_qc_mt=args.write_qc_mt,
+            export_hail_results_tsv=args.export_hail_results_tsv,
+            results_preview_n=args.results_preview_n,
         )
-        print(f"Hail pilot GWAS variants tested: {full.shape[0]}")
+        print(f"Hail pilot GWAS preview rows: {full.shape[0]}")
         print(f"Hail pilot GWAS lead hits: {hits.shape[0]}")
-        print(f"results: {hail_pilot_results_path(paths, label)}")
+        print(f"results_preview: {hail_pilot_results_preview_path(paths, label)}")
+        print(f"results_legacy_full_if_preview_complete: {hail_pilot_results_path(paths, label)}")
+        print(f"hail_results_ht: {hail_pilot_results_ht_uri(effective, label)}")
+        if args.export_hail_results_tsv:
+            print(f"hail_results_tsv: {hail_pilot_results_tsv_uri(effective, label)}")
+        if args.write_qc_mt:
+            print(f"qc_pass_mt: {hail_pilot_qc_pass_mt_uri(effective, label)}")
         print(f"lead_hits: {hail_pilot_lead_hits_path(paths, label)}")
         print(f"qc: {hail_pilot_qc_path(paths, label)}")
         print(f"variant_qc_summary: {hail_pilot_variant_qc_summary_path(paths, label)}")
