@@ -23,7 +23,7 @@ stage2:
   consequence_column: consequence
   revel_column: revel
   af_column: max_af
-  max_af: 0.01
+  max_af: 0.001
   revel_min: 0.8
   covariates: [age_at_index, is_female, pc1, pc2, pc3, pc4, pc5, crush_injury, sepsis, renal_injury]
 stage3:
@@ -38,7 +38,7 @@ stage3:
   consequence_column: consequence
   revel_column: revel
   af_column: max_af
-  max_af: 0.01
+  max_af: 0.001
   revel_min: 0.8
   masks: [pLoF, ClinVar_PLP, pLoF_or_REVEL_0_8]
   covariates: [age_at_index, is_female, pc1, pc2, pc3, pc4, pc5, preindex_crush_injury, preindex_sepsis, preindex_renal_injury]

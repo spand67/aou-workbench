@@ -236,7 +236,7 @@ class Stage2Config:
     consequence_column: str = "consequence"
     revel_column: str = "revel"
     af_column: str = "max_af"
-    max_af: float = 0.01
+    max_af: float = 0.001
     revel_min: float = 0.8
     plof_terms: tuple[str, ...] = DEFAULT_PLOF_TERMS
     clinvar_plp_terms: tuple[str, ...] = DEFAULT_CLINVAR_PLP_TERMS
@@ -256,7 +256,7 @@ class Stage3Config:
     consequence_column: str = "consequence"
     revel_column: str = "revel"
     af_column: str = "max_af"
-    max_af: float = 0.01
+    max_af: float = 0.001
     revel_min: float = 0.8
     masks: tuple[str, ...] = ("pLoF", "ClinVar_PLP", "pLoF_or_REVEL_0_8")
     plof_terms: tuple[str, ...] = DEFAULT_PLOF_TERMS
@@ -480,7 +480,7 @@ def _load_stage2(payload: Mapping[str, Any]) -> Stage2Config:
         consequence_column=payload.get("consequence_column", "consequence"),
         revel_column=payload.get("revel_column", "revel"),
         af_column=payload.get("af_column", "max_af"),
-        max_af=float(payload.get("max_af", 0.01)),
+        max_af=float(payload.get("max_af", 0.001)),
         revel_min=float(payload.get("revel_min", 0.8)),
         plof_terms=_as_string_tuple(payload.get("plof_terms")) or DEFAULT_PLOF_TERMS,
         clinvar_plp_terms=_as_string_tuple(payload.get("clinvar_plp_terms")) or DEFAULT_CLINVAR_PLP_TERMS,
@@ -501,7 +501,7 @@ def _load_stage3(payload: Mapping[str, Any]) -> Stage3Config:
         consequence_column=payload.get("consequence_column", "consequence"),
         revel_column=payload.get("revel_column", "revel"),
         af_column=payload.get("af_column", "max_af"),
-        max_af=float(payload.get("max_af", 0.01)),
+        max_af=float(payload.get("max_af", 0.001)),
         revel_min=float(payload.get("revel_min", 0.8)),
         masks=_as_string_tuple(payload.get("masks")) or ("pLoF", "ClinVar_PLP", "pLoF_or_REVEL_0_8"),
         plof_terms=_as_string_tuple(payload.get("plof_terms")) or DEFAULT_PLOF_TERMS,

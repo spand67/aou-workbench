@@ -40,6 +40,13 @@ class AnnotationMaskTests(unittest.TestCase):
                     "revel": 0.2,
                     "max_af": 0.0001,
                 },
+                {
+                    "variant_id": "too-common-plof",
+                    "clinvar_significance": "",
+                    "consequence": "stop_gained",
+                    "revel": 0.2,
+                    "max_af": 0.002,
+                },
             ]
         )
 
@@ -49,7 +56,7 @@ class AnnotationMaskTests(unittest.TestCase):
             consequence_column="consequence",
             revel_column="revel",
             af_column="max_af",
-            max_af=0.01,
+            max_af=0.001,
             revel_min=0.8,
             plof_terms=DEFAULT_PLOF_TERMS,
             clinvar_plp_terms=DEFAULT_CLINVAR_PLP_TERMS,
@@ -60,6 +67,7 @@ class AnnotationMaskTests(unittest.TestCase):
         self.assertTrue(bool(annotated.loc["splice-donor", "is_plof"]))
         self.assertTrue(bool(annotated.loc["splice-acceptor", "is_plof"]))
         self.assertTrue(bool(annotated.loc["clinvar-plp-splice-region", "mask_primary"]))
+        self.assertFalse(bool(annotated.loc["too-common-plof", "mask_primary"]))
 
 
 if __name__ == "__main__":

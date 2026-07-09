@@ -24,6 +24,8 @@ class ConfigLoadingTests(unittest.TestCase):
         self.assertEqual(config.phenotype.definite.measurement_window_start_days, -7)
         self.assertEqual(config.phenotype.definite.measurement_window_end_days, 45)
         self.assertEqual(config.phenotype.broad.name, "broad")
+        self.assertEqual(config.analysis.stage2.max_af, 0.001)
+        self.assertEqual(config.analysis.stage3.max_af, 0.001)
         self.assertEqual(config.cohort.primary_case_tier, "broad")
         self.assertEqual(config.workbench.microarray_mt_path, DEFAULT_MICROARRAY_MT_PATH)
         self.assertEqual(config.workbench.microarray_plink_prefix, DEFAULT_MICROARRAY_PLINK_PREFIX)
