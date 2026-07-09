@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 import csv
+import hashlib
 import io
 import json
 import os
@@ -24,7 +25,8 @@ def slugify(value: str) -> str:
 
 
 def stable_hash(payload: Mapping[str, Any]) -> str:
-    return json.dumps(payload, sort_keys=True, default=str).encode("utf-8").hex()[:16]
+    encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
 
 
 def _normalize_payload(payload: Any) -> Any:

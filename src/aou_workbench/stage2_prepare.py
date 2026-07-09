@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -9,7 +10,8 @@ import pandas as pd
 from .annotations import annotate_variant_masks
 from .config import ProjectConfig
 from .hail_utils import ensure_hail
-from .io_utils import ensure_parent_dir, write_dataframe, write_json
+from .io_utils import ensure_parent_dir, stable_hash, slugify, write_dataframe, write_json
+from .paths import join_path
 from .preflight import apply_runtime_defaults
 from .stage1_prepare import _analysis_person_ids
 
@@ -71,6 +73,52 @@ def _variant_id_from_vat(row: pd.Series) -> str:
         return vid.replace("chr", "")
     contig = str(row["contig"]).replace("chr", "")
     return f"{contig}-{int(row['position'])}-{row['ref_allele']}-{row['alt_allele']}"
+
+
+def _stage2_candidate_cache_path(
+    config: ProjectConfig,
+    *,
+    variant_table_path: str,
+    genes: list[str],
+    max_af: float,
+    revel_min: float,
+    plof_terms: tuple[str, ...],
+    clinvar_plp_terms: tuple[str, ...],
+) -> str:
+    cache_id = stable_hash(
+        {
+            "vat_path": config.workbench.vat_path,
+            "genes": genes,
+            "max_af": max_af,
+            "revel_min": revel_min,
+            "plof_terms": plof_terms,
+            "clinvar_plp_terms": clinvar_plp_terms,
+        }
+    )
+    bucket = config.workbench.workspace_bucket or os.getenv("WORKSPACE_BUCKET")
+    if bucket:
+        return join_path(
+            bucket,
+            "aou-workbench",
+            slugify(config.analysis.analysis_name),
+            "stage2",
+            f"vat-candidates-{cache_id}.ht",
+        )
+    if variant_table_path.startswith("gs://"):
+        return join_path(variant_table_path.rsplit("/", 1)[0], f"vat-candidates-{cache_id}.ht")
+    return f"{Path(variant_table_path).with_suffix('')}.vat_candidates_{cache_id}.ht"
+
+
+def _hail_path_exists(hl: object, path: str) -> bool:
+    try:
+        return bool(hl.current_backend().fs.exists(path))
+    except Exception:
+        return False
+
+
+def _hail_table_to_pandas(table: object) -> pd.DataFrame:
+    rows = table.key_by().collect()
+    return pd.DataFrame([dict(row) for row in rows])
 
 
 def _collapse_vat_annotations(frame: pd.DataFrame) -> pd.DataFrame:
@@ -138,7 +186,8 @@ def _vat_candidate_annotations(
     revel_min: float,
     plof_terms: tuple[str, ...],
     clinvar_plp_terms: tuple[str, ...],
-) -> tuple[pd.DataFrame, dict[str, int]]:
+    cache_path: str | None = None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
     if not genes:
         return pd.DataFrame(), {"vat_gene_rows": 0, "vat_variant_gene_rows": 0, "candidate_variant_gene_rows": 0}
 
@@ -146,6 +195,17 @@ def _vat_candidate_annotations(
         requester_pays_project=config.workbench.requester_pays_project,
         requester_pays_buckets=config.workbench.requester_pays_buckets,
     )
+    if cache_path and _hail_path_exists(hl, cache_path):
+        print(f"Using cached Stage 2 VAT candidates from {cache_path}", flush=True)
+        candidates = _hail_table_to_pandas(hl.read_table(cache_path))
+        return candidates, {
+            "vat_gene_rows": None,
+            "vat_variant_gene_rows": None,
+            "candidate_variant_gene_rows": int(len(candidates)),
+            "vat_candidate_cache_path": cache_path,
+            "vat_candidate_cache_used": True,
+        }
+
     print(f"Reading VAT annotations from {config.workbench.vat_path}", flush=True)
     vat = hl.import_table(
         config.workbench.vat_path,
@@ -188,10 +248,15 @@ def _vat_candidate_annotations(
         f"{len(candidates)} primary-mask variant-gene rows.",
         flush=True,
     )
+    if cache_path and not candidates.empty:
+        print(f"Writing Stage 2 VAT candidate cache to {cache_path}", flush=True)
+        hl.Table.from_pandas(candidates).write(cache_path, overwrite=True)
     return candidates, {
         "vat_gene_rows": int(len(raw)),
         "vat_variant_gene_rows": int(len(collapsed)),
         "candidate_variant_gene_rows": int(len(candidates)),
+        "vat_candidate_cache_path": cache_path,
+        "vat_candidate_cache_used": False,
     }
 
 
@@ -220,7 +285,7 @@ def _extract_candidate_genotypes_from_vds(
     config: ProjectConfig,
     sample_ids: list[str],
     annotations: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, object]]:
     if not sample_ids or annotations.empty:
         return pd.DataFrame(), pd.DataFrame(columns=["person_id"]), {"rows": 0, "cols": 0, "entries": 0}
 
@@ -233,23 +298,25 @@ def _extract_candidate_genotypes_from_vds(
 
     print(f"Reading direct WGS VDS from {config.workbench.wgs_vds_path}", flush=True)
     vds = hl.vds.read_vds(config.workbench.wgs_vds_path)
+    vds = hl.vds.filter_intervals(vds, intervals)
+    vds = hl.vds.split_multi(vds)
     mt = vds.variant_data
-    mt = hl.filter_intervals(mt, intervals)
-    mt = hl.split_multi_hts(mt)
 
     sample_set = hl.literal(set(sample_ids))
     mt = mt.filter_cols(sample_set.contains(mt.s))
     mt = mt.filter_rows(hl.is_defined(target_ht[mt.locus, mt.alleles]))
     mt = mt.annotate_rows(target=target_ht[mt.locus, mt.alleles])
 
-    row_count = mt.count_rows()
-    col_count = mt.count_cols()
-    print(f"Stage 2 VDS candidate slice contains {row_count} exact variant rows across {col_count} selected samples.", flush=True)
-
     col_ht = mt.cols()
     col_ht = col_ht.key_by()
     col_ht = col_ht.select(person_id=col_ht.s)
     present_samples = pd.DataFrame({"person_id": [str(row.person_id) for row in col_ht.collect()]})
+    col_count = len(present_samples)
+    print(
+        "Stage 2 VDS candidate slice restricted to "
+        f"{col_count} selected samples; skipping separate variant row count for speed.",
+        flush=True,
+    )
 
     entry_fields = _struct_fields(mt.entry)
     if "GT" in entry_fields:
@@ -268,7 +335,7 @@ def _extract_candidate_genotypes_from_vds(
 
     rows = entries.collect()
     if not rows:
-        return pd.DataFrame(), present_samples, {"rows": row_count, "cols": col_count, "entries": 0}
+        return pd.DataFrame(), present_samples, {"rows": None, "cols": col_count, "entries": 0}
 
     frame = pd.DataFrame(
         [
@@ -301,7 +368,7 @@ def _extract_candidate_genotypes_from_vds(
     for column in keep_columns:
         if column not in merged.columns:
             merged[column] = pd.NA
-    return merged[keep_columns], present_samples, {"rows": row_count, "cols": col_count, "entries": len(merged)}
+    return merged[keep_columns], present_samples, {"rows": None, "cols": col_count, "entries": len(merged)}
 
 
 def prepare_stage2_variant_table(
@@ -324,6 +391,15 @@ def prepare_stage2_variant_table(
         flush=True,
     )
 
+    vat_cache_path = _stage2_candidate_cache_path(
+        config,
+        variant_table_path=output_path,
+        genes=genes,
+        max_af=stage.max_af,
+        revel_min=stage.revel_min,
+        plof_terms=stage.plof_terms,
+        clinvar_plp_terms=stage.clinvar_plp_terms,
+    )
     annotations, vat_stats = _vat_candidate_annotations(
         config=config,
         genes=genes,
@@ -331,6 +407,7 @@ def prepare_stage2_variant_table(
         revel_min=stage.revel_min,
         plof_terms=stage.plof_terms,
         clinvar_plp_terms=stage.clinvar_plp_terms,
+        cache_path=vat_cache_path,
     )
     raw, present_samples, stats = _extract_candidate_genotypes_from_vds(
         config=config,
@@ -348,7 +425,9 @@ def prepare_stage2_variant_table(
             "analysis_people_manifest": sample_manifest_path,
             "genes_requested": genes,
             **vat_stats,
-            "exact_variant_rows_in_vds_slice": int(stats["rows"]),
+            "exact_variant_rows_in_vds_slice": (
+                int(stats["rows"]) if stats.get("rows") is not None else None
+            ),
             "non_reference_entries": int(stats["entries"]),
             "variants_with_hits": int(raw["variant_id"].nunique()) if not raw.empty else 0,
             "rows_written": int(len(raw)),

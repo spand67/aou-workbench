@@ -9,11 +9,48 @@ from aou_workbench.cohort import build_rhabdo_cohort
 from aou_workbench.config import load_project_config
 from aou_workbench.paths import build_output_paths
 from aou_workbench.stage2_plp_panel import run_stage2_plp_panel
-from aou_workbench.stage2_prepare import _collapse_vat_annotations, stage2_sample_manifest_path
+from aou_workbench.stage2_prepare import (
+    _collapse_vat_annotations,
+    _stage2_candidate_cache_path,
+    stage2_sample_manifest_path,
+)
 from tests.support import build_demo_project_tree
 
 
 class Stage2PlpPanelTests(unittest.TestCase):
+    def test_stage2_candidate_cache_path_uses_workspace_bucket_and_mask_settings(self) -> None:
+        paths = build_demo_project_tree()
+        config = load_project_config(
+            workbench_path=paths["workbench"],
+            phenotype_path=paths["phenotype"],
+            cohort_path=paths["cohort"],
+            panel_path=paths["panel"],
+            analysis_path=paths["analysis"],
+        )
+
+        strict = _stage2_candidate_cache_path(
+            config,
+            variant_table_path=paths["stage2_table"],
+            genes=["CPT2", "RYR1"],
+            max_af=0.001,
+            revel_min=0.8,
+            plof_terms=config.analysis.stage2.plof_terms,
+            clinvar_plp_terms=config.analysis.stage2.clinvar_plp_terms,
+        )
+        loose = _stage2_candidate_cache_path(
+            config,
+            variant_table_path=paths["stage2_table"],
+            genes=["CPT2", "RYR1"],
+            max_af=0.01,
+            revel_min=0.8,
+            plof_terms=config.analysis.stage2.plof_terms,
+            clinvar_plp_terms=config.analysis.stage2.clinvar_plp_terms,
+        )
+
+        self.assertTrue(strict.startswith("gs://test-workspace-bucket/aou-workbench/unit-test-rhabdo/stage2/"))
+        self.assertTrue(strict.endswith(".ht"))
+        self.assertNotEqual(strict, loose)
+
     def test_collapse_vat_annotations_combines_transcripts_and_preserves_max_scores(self) -> None:
         vat = pd.DataFrame(
             [
