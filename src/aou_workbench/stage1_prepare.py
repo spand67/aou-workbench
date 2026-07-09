@@ -145,8 +145,11 @@ def _extract_from_vds(
     intervals = [hl.parse_locus_interval(value, reference_genome="GRCh38") for value in _target_interval_strings(target_df)]
 
     print(f"Reading direct WGS VDS from {config.workbench.wgs_vds_path}", flush=True)
-    vds = hl.vds.read_vds(config.workbench.wgs_vds_path)
-    vds = hl.vds.filter_intervals(vds, intervals)
+    try:
+        vds = hl.vds.read_vds(config.workbench.wgs_vds_path, intervals=intervals)
+    except TypeError:
+        vds = hl.vds.read_vds(config.workbench.wgs_vds_path)
+        vds = hl.vds.filter_intervals(vds, intervals)
     vds = hl.vds.split_multi(vds)
 
     mt = vds.variant_data

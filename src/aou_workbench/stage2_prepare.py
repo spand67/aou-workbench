@@ -121,6 +121,14 @@ def _hail_table_to_pandas(table: object) -> pd.DataFrame:
     return pd.DataFrame([dict(row) for row in rows])
 
 
+def _read_vds_intervals(hl: object, path: str, intervals: list[object]):
+    try:
+        return hl.vds.read_vds(path, intervals=intervals)
+    except TypeError:
+        vds = hl.vds.read_vds(path)
+        return hl.vds.filter_intervals(vds, intervals)
+
+
 def _collapse_vat_annotations(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(
@@ -297,8 +305,7 @@ def _extract_candidate_genotypes_from_vds(
     intervals = _target_intervals_from_annotations(hl, annotations)
 
     print(f"Reading direct WGS VDS from {config.workbench.wgs_vds_path}", flush=True)
-    vds = hl.vds.read_vds(config.workbench.wgs_vds_path)
-    vds = hl.vds.filter_intervals(vds, intervals)
+    vds = _read_vds_intervals(hl, config.workbench.wgs_vds_path, intervals)
     vds = hl.vds.split_multi(vds)
     mt = vds.variant_data
 
