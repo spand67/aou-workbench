@@ -403,8 +403,15 @@ def run_preflight_checks(config: ProjectConfig) -> list[PreflightCheck]:
     if effective.analysis.stage2:
         checks.append(
             _check_local_or_gcs_path(
-                effective.workbench.clinvar_mt_path,
-                "input:clinvar_mt",
+                effective.workbench.vat_path,
+                "input:vat",
+                effective.workbench.requester_pays_project,
+            )
+        )
+        checks.append(
+            _check_local_or_gcs_path(
+                effective.workbench.wgs_vds_path,
+                "input:wgs_vds_stage2",
                 effective.workbench.requester_pays_project,
             )
         )

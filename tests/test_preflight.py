@@ -60,7 +60,8 @@ class PreflightTests(unittest.TestCase):
         names = [check.name for check in checks]
         self.assertIn("input:wgs_vds", names)
         self.assertIn("output:stage1", names)
-        self.assertIn("input:clinvar_mt", names)
+        self.assertIn("input:vat", names)
+        self.assertIn("input:wgs_vds_stage2", names)
         self.assertIn("output:stage2", names)
         self.assertIn("input:acaf_mt", names)
         self.assertIn("input:microarray_mt", names)
