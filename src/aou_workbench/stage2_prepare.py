@@ -280,11 +280,52 @@ def _target_table_from_annotations(hl: object, annotations: pd.DataFrame):
     return target_ht.key_by("locus", "alleles").select("variant_id")
 
 
+def _target_interval_strings_from_annotations(
+    annotations: pd.DataFrame,
+    *,
+    pad_bp: int = 1000,
+    merge_gap_bp: int = 50000,
+) -> list[str]:
+    if annotations.empty:
+        return []
+    required = {"contig", "position"}
+    missing = required - set(annotations.columns)
+    if missing:
+        raise ValueError(f"Cannot build VDS intervals; annotations missing columns: {sorted(missing)}")
+
+    frame = annotations.copy()
+    frame["position"] = pd.to_numeric(frame["position"], errors="coerce")
+    frame = frame.dropna(subset=["contig", "position"])
+    if frame.empty:
+        return []
+    frame["position"] = frame["position"].astype(int)
+    frame["contig"] = frame["contig"].astype(str)
+    group_columns = ["contig", "gene"] if "gene" in frame.columns else ["contig"]
+    grouped = (
+        frame.groupby(group_columns, dropna=False)
+        .agg(start=("position", "min"), end=("position", "max"))
+        .reset_index()
+    )
+
+    spans: list[tuple[str, int, int]] = []
+    for row in grouped.itertuples(index=False):
+        contig = str(getattr(row, "contig"))
+        start = max(1, int(row.start) - pad_bp)
+        end = int(row.end) + pad_bp
+        spans.append((contig, start, end))
+
+    merged: list[tuple[str, int, int]] = []
+    for contig, start, end in sorted(spans, key=lambda item: (item[0], item[1], item[2])):
+        if not merged or merged[-1][0] != contig or start > merged[-1][2] + merge_gap_bp:
+            merged.append((contig, start, end))
+        else:
+            prev_contig, prev_start, prev_end = merged[-1]
+            merged[-1] = (prev_contig, prev_start, max(prev_end, end))
+    return [f"{contig}:{start}-{end}" for contig, start, end in merged]
+
+
 def _target_intervals_from_annotations(hl: object, annotations: pd.DataFrame):
-    intervals = {
-        f"{row.contig}:{int(row.position)}-{int(row.position)}"
-        for row in annotations[["contig", "position"]].drop_duplicates().itertuples(index=False)
-    }
+    intervals = _target_interval_strings_from_annotations(annotations)
     return [hl.parse_locus_interval(value, reference_genome="GRCh38") for value in sorted(intervals)]
 
 

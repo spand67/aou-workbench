@@ -12,12 +12,38 @@ from aou_workbench.stage2_plp_panel import run_stage2_plp_panel
 from aou_workbench.stage2_prepare import (
     _collapse_vat_annotations,
     _stage2_candidate_cache_path,
+    _target_interval_strings_from_annotations,
     stage2_sample_manifest_path,
 )
 from tests.support import build_demo_project_tree
 
 
 class Stage2PlpPanelTests(unittest.TestCase):
+    def test_stage2_vds_intervals_are_compacted_by_gene_region(self) -> None:
+        annotations = pd.DataFrame(
+            [
+                {"contig": "chr1", "position": pos, "gene": "CPT2"}
+                for pos in range(53202000, 53202500, 50)
+            ]
+            + [
+                {"contig": "chr1", "position": 114693436, "gene": "AMPD1"},
+                {"contig": "chr19", "position": 38451842, "gene": "RYR1"},
+                {"contig": "chr19", "position": 38499993, "gene": "RYR1"},
+            ]
+        )
+
+        intervals = _target_interval_strings_from_annotations(annotations, pad_bp=1000)
+
+        self.assertEqual(
+            intervals,
+            [
+                "chr1:53201000-53203450",
+                "chr1:114692436-114694436",
+                "chr19:38450842-38500993",
+            ],
+        )
+        self.assertLess(len(intervals), annotations.shape[0])
+
     def test_stage2_candidate_cache_path_uses_workspace_bucket_and_mask_settings(self) -> None:
         paths = build_demo_project_tree()
         config = load_project_config(
