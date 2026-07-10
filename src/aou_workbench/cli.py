@@ -157,7 +157,7 @@ from .preflight import apply_runtime_defaults, format_preflight_report, run_pref
 from .regenie import prepare_regenie_inputs
 from .stage1_prepare import prepare_stage1_variant_table, prepare_wgs_sample_manifest
 from .stage1_prior_variants import run_stage1_prior_variants
-from .stage2_prepare import prepare_stage2_variant_table
+from .stage2_prepare import prepare_stage2_variant_table, prepare_stage2_vat_candidate_cache
 from .stage2_plp_panel import run_stage2_plp_panel
 from .stage4_hail_gwas import (
     hail_pilot_qc_pass_mt_uri,
@@ -407,9 +407,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     prepare_stage2_parser = subparsers.add_parser(
         "prepare-stage2",
-        help="Prepare the Stage 2 ClinVar genotype table from AoU smaller callsets.",
+        help="Prepare the Stage 2 rare-variant genotype table from VAT annotations plus targeted VDS genotypes.",
     )
     _add_config_arguments(prepare_stage2_parser)
+
+    prepare_stage2_vat_parser = subparsers.add_parser(
+        "prepare-stage2-vat-candidates",
+        help="Precompute/cache Stage 2 VAT candidate annotations without cohort or VDS genotype extraction.",
+    )
+    _add_config_arguments(prepare_stage2_vat_parser)
 
     prepare_regenie_parser = subparsers.add_parser(
         "prepare-regenie",
@@ -1145,6 +1151,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         print(f"Prepared Stage 2 rows: {frame.shape[0]}")
         print(stage.variant_table)
+        return 0
+
+    if args.command == "prepare-stage2-vat-candidates":
+        effective = apply_runtime_defaults(config)
+        frame, stats = prepare_stage2_vat_candidate_cache(effective)
+        if not stats.get("stage2_configured"):
+            print("Stage 2 is not configured.")
+            return 0
+        print(f"Prepared Stage 2 VAT candidate rows: {frame.shape[0]}")
+        print(f"Cache path: {stats.get('vat_candidate_cache_path')}")
+        print(f"Cache used: {stats.get('vat_candidate_cache_used')}")
         return 0
 
     if args.command == "prepare-regenie":

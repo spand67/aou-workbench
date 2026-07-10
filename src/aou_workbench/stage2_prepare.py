@@ -447,8 +447,48 @@ def prepare_stage2_variant_table(
     return raw
 
 
+def prepare_stage2_vat_candidate_cache(config: ProjectConfig) -> tuple[pd.DataFrame, dict[str, object]]:
+    config = apply_runtime_defaults(config)
+    stage = config.analysis.stage2
+    if stage is None:
+        return pd.DataFrame(), {"stage2_configured": False}
+
+    genes = sorted(set(config.panel.genes_of_interest))
+    cache_path = _stage2_candidate_cache_path(
+        config,
+        variant_table_path=stage.variant_table,
+        genes=genes,
+        max_af=stage.max_af,
+        revel_min=stage.revel_min,
+        plof_terms=stage.plof_terms,
+        clinvar_plp_terms=stage.clinvar_plp_terms,
+    )
+    print(
+        f"Preparing Stage 2 VAT candidate cache for {len(genes)} genes "
+        f"(max_af={stage.max_af}, revel_min={stage.revel_min}).",
+        flush=True,
+    )
+    candidates, stats = _vat_candidate_annotations(
+        config=config,
+        genes=genes,
+        max_af=stage.max_af,
+        revel_min=stage.revel_min,
+        plof_terms=stage.plof_terms,
+        clinvar_plp_terms=stage.clinvar_plp_terms,
+        cache_path=cache_path,
+    )
+    stats = {
+        **stats,
+        "stage2_configured": True,
+        "genes_requested": genes,
+        "rows_available": int(len(candidates)),
+    }
+    return candidates, stats
+
+
 __all__ = [
     "prepare_stage2_variant_table",
+    "prepare_stage2_vat_candidate_cache",
     "stage2_sample_manifest_path",
     "_collapse_vat_annotations",
     "_vat_candidate_annotations",
